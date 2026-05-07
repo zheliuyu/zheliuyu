@@ -1,4 +1,8 @@
-## Hi there 👋
+## Interested in
+
+ 🔭Liger-Kernel + NPU: https://github.com/linkedin/Liger-Kernel/issues/969
+ 
+🌱Ascend/docs: https://ascend.github.io/docs/
 
 <!--
 **zheliuyu/zheliuyu** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
