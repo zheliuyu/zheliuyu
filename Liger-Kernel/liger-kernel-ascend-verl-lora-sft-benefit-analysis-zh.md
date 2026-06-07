@@ -80,7 +80,7 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 | 硬件 | Atlas 800T A3(x86) |
 | 整网并行 | 1 node × **4 NPU**（FSDP，见表 7） |
 | Liger-Kernel | [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea) |
-| verl | [`c131c70`](https://github.com/volcengine/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669) |
+| verl | [`c131c70`](https://github.com/verl-project/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669) |
 | 精度 | bfloat16 |
 | 模型 | Qwen3-8B（hidden=4096，GQA 32 heads / 8 kv heads，vocab≈128256） |
 | 最大序列长度 | **8192** tokens（SFT 与 benchmark 关键对齐点） |
@@ -174,7 +174,7 @@ Qwen3 每个 decoder 层包含 2 次 RMSNorm 调用，36 层合计 **72 次/step
 
 ### 4.1 verl 与 Liger-Kernel 接入
 
-[verl](https://github.com/volcengine/verl)（Volcano Engine Reinforcement Learning）是面向大语言模型后训练的开源框架，统一支持 SFT、RLHF、DPO 等任务。与第 3 节独立的算子 micro-benchmark 不同，整网实验需在 **真实训练栈** 中验证 Liger-Kernel 接入后，收益能否稳定传递至 step 级指标。
+[verl](https://github.com/verl-project/verl)（Volcano Engine Reinforcement Learning for LLMs，HybridFlow 开源实现）是面向大语言模型后训练的开源框架，统一支持 SFT、RLHF、DPO 等任务。与第 3 节独立的算子 micro-benchmark 不同，整网实验需在 **真实训练栈** 中验证 Liger-Kernel 接入后，收益能否稳定传递至 step 级指标。
 
 本次实验采用 verl 的 **SFTTrainer** 路径：在 Qwen3-8B 基座模型上执行 GSM8K 监督微调，在 **4 卡 NPU** 上通过 **FSDP** 进行参数分片、梯度同步与显存管理，通过 **LoRA（rank=32）** 仅更新低秩 adapter，其余 base 权重保持冻结。该配置代表当前 NPU 上较常见的多卡参数高效微调场景。
 
@@ -334,7 +334,7 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 
 ### 6.1 Liger-Kernel 与 NPU 接入
 
-Liger-Kernel v0.8.0 的 Ascend 后端已提供较完整的低层算子能力（26 个模块）及 Qwen3 高层 patch 接口；在 verl 中通过 `use_liger=True` 即可在不改动训练调度逻辑的前提下完成接入。本次整网实验采用 Qwen3 上常见的 **rms_norm、rope、cross_entropy** patch 作为验证配置；**fused_linear_cross_entropy** 因 verl 自有实现而未纳入，表 1 中其余算子亦未在本次实验中一并开启。
+Liger-Kernel [v0.8.0](https://github.com/linkedin/Liger-Kernel/releases/tag/v0.8.0) 的 Ascend 后端已提供较完整的低层算子能力（26 个模块）及 Qwen3 高层 patch 接口；在 verl 中通过 `use_liger=True` 即可在不改动训练调度逻辑的前提下完成接入。本次整网实验采用 Qwen3 上常见的 **rms_norm、rope、cross_entropy** patch 作为验证配置；**fused_linear_cross_entropy** 因 verl 自有实现而未纳入，表 1 中其余算子亦未在本次实验中一并开启。
 
 ### 6.2 算子层结论
 
@@ -376,4 +376,10 @@ Liger-Kernel v0.8.0 的 Ascend 后端已提供较完整的低层算子能力（2
 
 ---
 
-*数据可用性.* Liger 0.8.0、commit [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea)；verl commit [`c131c70`](https://github.com/volcengine/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669)；Atlas 800T A3(x86) micro-benchmark 与 **4 卡** verl LoRA SFT 原始训练日志。整网指标均基于逐步原始记录统计，未做平滑或截断。
+*数据可用性.* Liger 0.8.0、commit [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea)；verl commit [`c131c70`](https://github.com/verl-project/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669)；Atlas 800T A3(x86) micro-benchmark 与 **4 卡** verl LoRA SFT 原始训练日志。整网指标均基于逐步原始记录统计，未做平滑或截断。
+
+## 参考文献
+
+[1] LinkedIn. *Liger-Kernel*. https://github.com/linkedin/Liger-Kernel
+
+[2] verl-project. *verl*. https://github.com/verl-project/verl

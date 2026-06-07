@@ -80,7 +80,7 @@ This section lists **shared** hardware, software, and model settings for operato
 | Hardware | Atlas 800T A3(x86) |
 | End-to-end parallelism | 1 node × **4 NPUs** (FSDP; see Table 7) |
 | Liger-Kernel | [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea) |
-| verl | [`c131c70`](https://github.com/volcengine/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669) |
+| verl | [`c131c70`](https://github.com/verl-project/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669) |
 | Precision | bfloat16 |
 | Model | Qwen3-8B (hidden=4096, GQA 32 heads / 8 kv heads, vocab≈128256) |
 | Max sequence length | **8192** tokens (key alignment point for SFT and benchmarks) |
@@ -174,7 +174,7 @@ CrossEntropy runs once per step (LM head loss) with vocab=128256. Figures 7–9 
 
 ### 4.1 verl and Liger-Kernel Integration
 
-[verl](https://github.com/volcengine/verl) (Volcano Engine Reinforcement Learning) is an open-source post-training framework for LLMs, supporting SFT, RLHF, DPO, and more. Unlike isolated micro-benchmarks in Section 3, end-to-end runs must verify that benefits persist to step-level metrics after Liger-Kernel adoption in a **real training stack**.
+[verl](https://github.com/verl-project/verl) (Volcano Engine Reinforcement Learning for LLMs, open-source implementation of HybridFlow) is an open-source post-training framework for LLMs, supporting SFT, RLHF, DPO, and more. Unlike isolated micro-benchmarks in Section 3, end-to-end runs must verify that benefits persist to step-level metrics after Liger-Kernel adoption in a **real training stack**.
 
 This experiment uses verl **SFTTrainer**: GSM8K supervised fine-tuning on Qwen3-8B with **4 NPUs**, **FSDP** for sharding and gradient sync, and **LoRA (rank=32)** updating only low-rank adapters while base weights stay frozen—a common multi-card parameter-efficient fine-tuning setup on NPU.
 
@@ -334,7 +334,7 @@ Under **Qwen3-8B + verl LoRA SFT (4-card FSDP) + Atlas 800T A3(x86)**, this repo
 
 ### 6.1 Liger-Kernel and NPU Integration
 
-Liger-Kernel v0.8.0 provides broad Ascend low-level coverage (26 modules) and Qwen3 high-level patch APIs; verl integrates via `use_liger=True` without changing scheduler logic. This run validates the common Qwen3 patch **rms_norm, rope, cross_entropy**; **fused_linear_cross_entropy** is excluded due to verl’s native implementation, and other Table 1 operators were not enabled together in this experiment.
+Liger-Kernel [v0.8.0](https://github.com/linkedin/Liger-Kernel/releases/tag/v0.8.0) provides broad Ascend low-level coverage (26 modules) and Qwen3 high-level patch APIs; verl integrates via `use_liger=True` without changing scheduler logic. This run validates the common Qwen3 patch **rms_norm, rope, cross_entropy**; **fused_linear_cross_entropy** is excluded due to verl’s native implementation, and other Table 1 operators were not enabled together in this experiment.
 
 ### 6.2 Operator-Level Conclusions
 
@@ -376,4 +376,10 @@ The **−21.29%** host CPU memory drop cannot be explained by isolated micro-ben
 
 ---
 
-*Data availability.* Liger 0.8.0, commit [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea); verl commit [`c131c70`](https://github.com/volcengine/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669); Atlas 800T A3(x86) micro-benchmark and **4-card** verl LoRA SFT raw training logs. End-to-end metrics use raw per-step records without smoothing or truncation.
+*Data availability.* Liger 0.8.0, commit [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea); verl commit [`c131c70`](https://github.com/verl-project/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669); Atlas 800T A3(x86) micro-benchmark and **4-card** verl LoRA SFT raw training logs. End-to-end metrics use raw per-step records without smoothing or truncation.
+
+## References
+
+[1] LinkedIn. *Liger-Kernel*. https://github.com/linkedin/Liger-Kernel
+
+[2] verl-project. *verl*. https://github.com/verl-project/verl
