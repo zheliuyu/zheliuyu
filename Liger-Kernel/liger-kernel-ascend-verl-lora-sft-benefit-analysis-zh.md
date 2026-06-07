@@ -22,15 +22,15 @@
 Corresponding author listed first; all other authors ranked by merged NPU-related PR count (ties broken alphabetically).</em>
 </p>
 
-## Abstract
+## 摘要
 
 在 **Qwen3-8B + verl LoRA SFT（4 卡 FSDP）+ Atlas 800T A3(x86)** 配置下，本报告采用「算子 micro-benchmark → verl 整网训练」两阶段方法，评估 **Liger-Kernel 在昇腾训练栈中的接入收益**。算子层以 Qwen3 SFT 路径上高频的 **rms_norm、rope、cross_entropy** 为代表性样例，在 T=8192、full 模式下测得加速比 **1.69× / 1.25× / 1.90×**，峰值 NPU 显存节省 **28.8%～68.4%**；整网层（GSM8K、580 step、global_tokens 100% 对齐）在启用 Liger-Kernel 后 MFU 中位数相对提升 **4.14%**，Host CPU 内存末步下降 **21.29%**，train/val loss 与对照组整体重合且末步略优。Amdahl 估算的理论 MFU 提升（约 **4.3%**）与实测一致。结果表明：Liger-Kernel 可在 verl LoRA SFT 中低侵入接入，未引入可观测精度风险，并在吞吐与 Host 内存方面带来稳定收益；上述三项 kernel 的单点表现可作为 Ascend 后端能力与整网收益的可复现验证样例。
 
-**Keywords:** Liger-Kernel; Ascend NPU; verl; LoRA SFT; Micro-Benchmark; MFU
+**关键词：** Liger-Kernel；Ascend NPU；verl；LoRA SFT；Micro-Benchmark；MFU
 
 ## 1 引言
 
-### 1.1 Liger-Kernel 简介
+### 1.1 Liger-Kernel 概述
 
 [Liger-Kernel](https://github.com/linkedin/Liger-Kernel) 是面向大语言模型训练的融合算子库，基于 Triton 在 GPU 侧实现 RMSNorm、RoPE、CrossEntropy 等高频算子的融合计算与 in-place 优化，目标是在保持计算语义不变的前提下降低显存占用并提升训练吞吐。主要接入方式包括：
 
@@ -39,7 +39,7 @@ Corresponding author listed first; all other authors ranked by merged NPU-relate
 
 在 verl 等训练框架中，可通过 `use_liger=True` 一键触发 monkey patch，在不修改模型结构的前提下将模型中的部分算子切换为 Liger 实现；具体启用哪些模块由 patch 配置决定（如 Qwen3 的 `apply_liger_kernel_to_qwen3`）。
 
-### 1.2 昇腾 NPU 支持情况
+### 1.2 Ascend NPU 支持
 
 Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/releases/tag/v0.8.0) 中正式提供 NPU 原生支持。运行时，NPU 侧采用独立 Ascend 后端（`liger_kernel.ops.backends._ascend`），在检测到 NPU 设备后自动注册并替换默认 CUDA/Triton 实现；依赖栈为 **torch 2.6 + torch_npu 2.6.0 + triton-ascend 3.2.0**（见项目 `setup.py`）。
 
@@ -55,44 +55,44 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 
 **高层 Patching：** Qwen3 等架构可通过 `apply_liger_kernel_to_qwen3` 按需启用 `rms_norm`、`rope`、`cross_entropy`、`fused_linear_cross_entropy` 等模块。
 
-### 1.3 研究目标与主要结果
+### 1.3 目标与主要结果
 
-在 **Qwen3-8B + verl LoRA SFT（4 卡 FSDP）+ Atlas 800T A3(x86)** 场景下，本报告关注 **Liger-Kernel 从单算子能力到 verl 整网训练的综合收益**，而非某一类算子的孤立优化。Ascend 后端已覆盖 Norm、Attention、Loss 等多类算子（见表 1）；本次评估选取 Qwen3 SFT 路径上调用频次高、且与 verl 默认 patch 对齐的 **rms_norm、rope、cross_entropy** 作为 **代表性验证样例**，用以说明「Kernel 层是否值得接入」以及「接入后整网表现如何」。本报告按 **「单 Kernel 能力评估 → verl LoRA 整网验证」** 两条主线组织：
+在 **Qwen3-8B + verl LoRA SFT（4 卡 FSDP）+ Atlas 800T A3(x86)** 场景下，本报告关注 **Liger-Kernel 从单算子能力到 verl 整网训练的综合收益**，而非某一类算子的孤立优化。Ascend 后端已覆盖 Norm、Attention、Loss 等多类算子（见表 1）。本次评估选取 Qwen3 SFT 路径上调用频次高、且与 verl 默认 patch 对齐的 **rms_norm、rope、cross_entropy** 作为代表性验证样例，用于回答 kernel 层是否值得接入，以及接入后整网表现如何。报告按两条主线组织：**单算子能力评估 → verl LoRA 整网验证**。
 
-1. **算子层（Micro-Benchmark）：** 以代表性 kernel 为样例，评估 Liger Ascend 实现相对基线的 **性能与显存收益**，为整网接入提供依据；
-2. **整网层（verl End-to-End）：** 在真实 LoRA SFT 链路中启用 Liger-Kernel，观测 **吞吐（MFU）、显存占用及 loss 收敛** 等端到端指标。
+1. **算子层：** 以代表性 kernel 为样例，评估 Liger Ascend 实现相对基线的性能与显存收益，为整网接入提供依据；
+2. **整网层：** 在真实 LoRA SFT 链路中启用 Liger-Kernel，观测吞吐（MFU）、显存占用及 loss 收敛等端到端指标。
 
 **表 2** 主要结果摘要（GSM8K SFT，4 卡，580 step；算子层为代表性 kernel 样例）
 
 | 层次 | 主要收益 | 关键数据 |
 |------|----------|----------|
-| **算子层（样例）** | Liger 单 kernel 加速与显存节省 | RMSNorm **1.69×** / 节省 **68.4%**；RoPE **1.25×** / 节省 **28.8%**；CE **1.90×** / 节省 **40.0%**（T=8192） |
-| **verl LoRA SFT（Liger 接入）** | 吞吐、内存与精度 | MFU **+4.14%**；Host CPU 内存 **-21.29%**（末步）；val/loss **-3.27%**；token 对齐 **100%** |
+| **算子层** | Liger 单 kernel 加速与显存节省 | RMSNorm **1.69×** / **68.4%**；RoPE **1.25×** / **28.8%**；CE **1.90×** / **40.0%**（T=8192） |
+| **verl LoRA SFT** | 吞吐、内存与精度 | MFU **+4.14%**；Host CPU 内存 **-21.29%**（末步）；val/loss **-3.27%**；token 对齐 **100%** |
 
 ## 2 实验设置
 
-列出算子 micro-benchmark 与 verl LoRA SFT 整网实验 **共用** 的硬件、软件及模型相关配置；各实验的具体方案分别见第 3 节与第 4 节。
+本节列出算子 micro-benchmark 与 verl LoRA SFT 整网实验共用的硬件、软件及模型配置；分节设计见第 3、4 节。
 
 **表 3** 实验环境与配置
 
 | 项目 | 配置 |
 |------|------|
-| 硬件平台 | Atlas 800T A3(x86) |
-| 整网训练并行 | 1 node × **4 NPU**（FSDP，详见表 7） |
+| 硬件 | Atlas 800T A3(x86) |
+| 整网并行 | 1 node × **4 NPU**（FSDP，见表 7） |
 | Liger-Kernel | [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea) |
 | verl | [`c131c70`](https://github.com/volcengine/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669) |
-| 计算精度 | bfloat16 |
-| 对齐模型 | Qwen3-8B（hidden=4096，GQA 32 heads / 8 kv heads，vocab≈128256） |
-| 序列长度上限 | **8192** tokens（SFT 与 benchmark 关键对齐点） |
-| 本次验证样例（算子层 / 整网 patch） | `rms_norm`、`rope`、`cross_entropy`（Qwen3 SFT 高频路径，见表 8） |
+| 精度 | bfloat16 |
+| 模型 | Qwen3-8B（hidden=4096，GQA 32 heads / 8 kv heads，vocab≈128256） |
+| 最大序列长度 | **8192** tokens（SFT 与 benchmark 关键对齐点） |
+| 验证样例 | `rms_norm`、`rope`、`cross_entropy`（Qwen3 SFT 高频路径，见表 8） |
 
 ## 3 算子层评估
 
-**分析目标：** 通过代表性 kernel 的单点测试，说明 Liger Ascend 后端相对基线实现的 **性能与显存收益**，为整网接入 Liger-Kernel 提供依据。本节并不穷尽 Ascend 后端全部算子（见表 1），而是以与第 4 节整网实验一致的 **rms_norm、rope、cross_entropy** 为样例展开分析。
+**目标：** 通过代表性 kernel 的单点测试，说明 Liger Ascend 后端相对基线实现的性能与显存收益，支持整网 Liger-Kernel 接入。本节并不穷尽 Ascend 后端全部算子（见表 1），而以与第 4 节整网实验一致的 **rms_norm、rope、cross_entropy** 为样例展开分析。
 
 ### 3.1 实验设计
 
-**表 4** 算子 micro-benchmark 实验设计（代表性 kernel 样例）
+**表 4** 算子 micro-benchmark 实验设计
 
 | 项目 | 配置 |
 |------|------|
@@ -106,9 +106,9 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 | CrossEntropy 基线 | PyTorch `CrossEntropyLoss` |
 | 对比方式 | 相同 shape、相同 T 下，Liger Ascend 实现 vs 基线实现 |
 
-### 3.2 T=8192 综合结果
+### 3.2 T=8192 汇总结果
 
-**表 5** 代表性 kernel 在 T=8192 的 micro-benchmark 结果（full 模式）
+**表 5** 代表性 kernel 在 T=8192 的 micro-benchmark 结果
 
 | Kernel | 基线 | Liger | **加速比** | **显存节省** |
 |--------|------|-------|------------|--------------|
@@ -116,7 +116,7 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 | RoPE | 5.19 ms | 4.14 ms | **1.25×** | **28.8%** |
 | CrossEntropy | 22.52 ms | 11.88 ms | **1.90×** | **40.0%** |
 
-### 3.3 单 kernel 分析
+### 3.3 逐算子分析
 
 以下三节以 Qwen3 SFT 计算图中的三类高频算子为例，展示 Liger Ascend 后端在 **耗时、显存与序列长度扩展性** 上的单点收益；同类算子（如 LayerNorm、FusedMoE 等）的评估方法可复用本节流程。
 
@@ -128,9 +128,9 @@ Qwen3 每个 decoder 层包含 2 次 RMSNorm 调用，36 层合计 **72 次/step
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_full_token_length.png" alt="RMSNorm full 模式耗时" width="100%"/><br/><strong>图 1</strong> RMSNorm full 模式耗时随序列长度变化</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_backward_token_length.png" alt="RMSNorm backward 模式耗时" width="100%"/><br/><strong>图 2</strong> RMSNorm backward 模式耗时随序列长度变化</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_memory_full_token_length.png" alt="RMSNorm full 模式峰值显存" width="100%"/><br/><strong>图 3</strong> RMSNorm full 模式峰值显存随序列长度变化</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_full_token_length.png" alt="RMSNorm full-mode latency" width="100%"/><br/><strong>图 1</strong> RMSNorm full 模式耗时（随序列长度）</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_backward_token_length.png" alt="RMSNorm backward-mode latency" width="100%"/><br/><strong>图 2</strong> RMSNorm backward 模式耗时（随序列长度）</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_memory_full_token_length.png" alt="RMSNorm full-mode peak memory" width="100%"/><br/><strong>图 3</strong> RMSNorm full 模式峰值显存（随序列长度）</td>
 </tr>
 </table>
 
@@ -140,9 +140,9 @@ Qwen3 每个 decoder 层包含 2 次 RMSNorm 调用，36 层合计 **72 次/step
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_full_token_length.png" alt="RoPE full 模式耗时" width="100%"/><br/><strong>图 4</strong> RoPE full 模式耗时随序列长度变化</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_forward_token_length.png" alt="RoPE forward 模式耗时" width="100%"/><br/><strong>图 5</strong> RoPE forward 模式耗时随序列长度变化</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_memory_full_token_length.png" alt="RoPE full 模式峰值显存" width="100%"/><br/><strong>图 6</strong> RoPE full 模式峰值显存随序列长度变化</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_full_token_length.png" alt="RoPE full-mode latency" width="100%"/><br/><strong>图 4</strong> RoPE full 模式耗时（随序列长度）</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_forward_token_length.png" alt="RoPE forward-mode latency" width="100%"/><br/><strong>图 5</strong> RoPE forward 模式耗时（随序列长度）</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_memory_full_token_length.png" alt="RoPE full-mode peak memory" width="100%"/><br/><strong>图 6</strong> RoPE full 模式峰值显存（随序列长度）</td>
 </tr>
 </table>
 
@@ -152,15 +152,15 @@ Qwen3 每个 decoder 层包含 2 次 RMSNorm 调用，36 层合计 **72 次/step
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_full_token_length.png" alt="CrossEntropy full 模式耗时" width="100%"/><br/><strong>图 7</strong> CrossEntropy full 模式耗时随序列长度变化</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_forward_token_length.png" alt="CrossEntropy forward 模式耗时" width="100%"/><br/><strong>图 8</strong> CrossEntropy forward 模式耗时随序列长度变化</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_memory_full_token_length.png" alt="CrossEntropy full 模式峰值显存" width="100%"/><br/><strong>图 9</strong> CrossEntropy full 模式峰值显存随序列长度变化</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_full_token_length.png" alt="CrossEntropy full-mode latency" width="100%"/><br/><strong>图 7</strong> CrossEntropy full 模式耗时（随序列长度）</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_forward_token_length.png" alt="CrossEntropy forward-mode latency" width="100%"/><br/><strong>图 8</strong> CrossEntropy forward 模式耗时（随序列长度）</td>
+<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_memory_full_token_length.png" alt="CrossEntropy full-mode peak memory" width="100%"/><br/><strong>图 9</strong> CrossEntropy full 模式峰值显存（随序列长度）</td>
 </tr>
 </table>
 
 ### 3.4 算子层小结
 
-**表 6** 算子层评估小结（基于代表性 kernel 样例）
+**表 6** 算子层评估小结
 
 | 维度 | 结论 |
 |------|------|
@@ -168,11 +168,11 @@ Qwen3 每个 decoder 层包含 2 次 RMSNorm 调用，36 层合计 **72 次/step
 | 显存 | 样例中 RMSNorm **68.4%** > CrossEntropy **40%** > RoPE **28.8%** |
 | 与整网衔接 | 以上三项作为本次 Liger-Kernel 整网 patch 配置，进入第 4 节 verl 验证 |
 
-## 4 整网层评估
+## 4 整网评估
 
-**分析目标：** 在完整 LoRA SFT 训练链路中，对比 **启用与关闭 Liger-Kernel** 的端到端差异，观测其在吞吐、显存及精度指标上的综合收益。本节关注框架级接入效果；具体 patch 的算子清单见表 8。
+**目标：** 在完整 LoRA SFT 训练链路中，对比启用与关闭 Liger-Kernel 的端到端差异，观测其在吞吐、显存及精度上的综合收益。本节关注框架级接入效果；patch 算子清单见表 8。
 
-### 4.1 verl 训练框架与 Liger 接入
+### 4.1 verl 与 Liger-Kernel 接入
 
 [verl](https://github.com/volcengine/verl)（Volcano Engine Reinforcement Learning）是面向大语言模型后训练的开源框架，统一支持 SFT、RLHF、DPO 等任务。与第 3 节独立的算子 micro-benchmark 不同，整网实验需在 **真实训练栈** 中验证 Liger-Kernel 接入后，收益能否稳定传递至 step 级指标。
 
@@ -194,9 +194,9 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 | 训练量 | 20 epoch，**580 step** |
 | 日志来源 | `use_liger_rms_rope_ce.log`（实验组）、`no_liger.log`（对照组） |
 
-**表 8** 本次整网实验的 Liger-Kernel patch 配置（Qwen3）
+**表 8** 本次整网实验的 Liger-Kernel patch 配置
 
-| Kernel | 是否启用 | NPU 后端 | 替换对象 |
+| Kernel | 启用 | NPU 后端 | 替换对象 |
 |--------|----------|----------|----------|
 | **rms_norm** | 是 | `LigerRMSNormFunction` | HF Qwen3RMSNorm |
 | **rope** | 是 | `LigerRopeFunction` | HF apply_rotary_pos_emb |
@@ -208,19 +208,19 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 
 | 组别 | 配置 |
 |------|------|
-| **实验组（+Liger-Kernel）** | `use_liger=True`，启用表 8 所列 patch |
-| **对照组（Baseline）** | 相同 verl / LoRA 配置，`use_liger=False` |
+| **实验组** | `use_liger=True`，启用表 8 所列 patch |
+| **对照组** | 相同 verl / LoRA 配置，`use_liger=False` |
 | **有效性校验** | 580/580 step 的 `global_tokens` 完全一致 |
 
 整网层面的收益幅度受 LoRA 计算图组成及本次 patch 范围影响，算子级加速向 MFU 的传递机制见第 5 节。
 
 ### 4.3 评估指标
 
-整网对比从 verl 训练日志中提取逐步（step-wise）原始记录，未做平滑或截断。主要观测指标如下。
+整网对比使用 verl 训练日志中的逐步原始记录，未做平滑或截断。
 
-**表 10** 整网评估指标说明
+**表 10** 整网评估指标
 
-| 指标 | 含义 | 期望 |
+| 指标 | 含义 | 期望方向 |
 |------|------|------|
 | `train/mfu` | NPU 算力利用率（Model FLOPs Utilization） | 越高表示吞吐越好 |
 | `perf/max_memory_allocated_gb` | NPU 实际分配显存峰值 | 越低越好 |
@@ -229,14 +229,14 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 | `train/loss`、`val/loss` | 训练/验证损失 | 与对照组等价或更优 |
 | `train/global_tokens` | 每 step 参与训练的 token 数 | 两组应对齐，以保证对比因果有效 |
 
-### 4.4 分项分析
+### 4.4 详细分析
 
 **吞吐（MFU）：** 启用 Liger-Kernel 后，实验组 MFU 相对对照组提升约 **4%**，与第 3 节样例 kernel 的加速方向一致。图 10、图 11 显示，两条曲线自 step 2 起分离，实验组稳定运行于较高区间；step 1 受编译与预热影响，不宜作为稳态对比依据。剔除 step 1 后，MFU 中位数为 **0.7514 vs 0.7216（+4.14%）**，579 步中 574 步实验组更高。按 `global_tokens` 四分位统计，MFU 相对提升由低 token 步的 **+3.88%** 增至高 token 步的 **+4.48%**，与样例中 CrossEntropy、RoPE 在长序列下的单点收益特征一致。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="整网训练 MFU" width="100%"/><br/><strong>图 10</strong> 整网训练 MFU 逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="剔除 step 1 后的 MFU" width="100%"/><br/><strong>图 11</strong> 剔除 step 1 后的 MFU 逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="End-to-end MFU" width="100%"/><br/><strong>图 10</strong> 整网 MFU 逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="MFU excluding step 1" width="100%"/><br/><strong>图 11</strong> 整网 MFU 逐步曲线（剔除 step 1）</td>
 </tr>
 </table>
 
@@ -244,15 +244,15 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated 显存" width="100%"/><br/><strong>图 12</strong> NPU allocated 显存逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved 显存" width="100%"/><br/><strong>图 13</strong> NPU reserved 显存逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated memory" width="100%"/><br/><strong>图 12</strong> NPU allocated 显存逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved memory" width="100%"/><br/><strong>图 13</strong> NPU reserved 显存逐步曲线</td>
 </tr>
 </table>
 
-**Host 内存：** 实验组自训练初期即低于对照组，末步为 **96.26 GB vs 122.29 GB（-21.29%）**，绝对差约 26 GB（图 14）。该指标无法由 NPU 单算子 micro-benchmark 直接推导，属于融合 kernel 与 verl/FSDP 数据管线协同作用下的整网效应，对长周期 LoRA SFT 的资源占用具有实际意义。
+**Host 内存：** 实验组自训练初期即低于对照组，末步为 **96.26 GB vs 122.29 GB（-21.29%）**，绝对差约 26 GB（图 14）。该指标无法由 isolated micro-benchmark 直接解释，属于 **Liger-Kernel 接入后** 训练栈层面的观测现象，对长周期 LoRA SFT 的资源规划具有实际意义。
 
 <p align="center">
-<img src="../assets/Liger-Kernel/verl-sft/perf_cpu_memory_used_gb.png" alt="Host CPU 内存" width="66%"/><br/>
+<img src="../assets/Liger-Kernel/verl-sft/perf_cpu_memory_used_gb.png" alt="Host CPU memory" width="66%"/><br/>
 <strong>图 14</strong> Host CPU 内存逐步曲线
 </p>
 
@@ -260,25 +260,23 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="训练 loss" width="100%"/><br/><strong>图 15</strong> 训练 loss 逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="训练梯度范数" width="100%"/><br/><strong>图 16</strong> 训练梯度范数逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="Training loss" width="100%"/><br/><strong>图 15</strong> 训练 loss 逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="Gradient norm" width="100%"/><br/><strong>图 16</strong> 梯度范数逐步曲线</td>
 </tr>
 </table>
 
 **实验有效性：** 580/580 step 的 `global_tokens` 完全一致（图 17），累计 token 均为 0.03065 B，可排除 batch 配置差异对对比结果的干扰。
 
 <p align="center">
-<img src="../assets/Liger-Kernel/verl-sft/train_global_tokens.png" alt="global_tokens 对齐" width="66%"/><br/>
-<strong>图 17</strong> global_tokens 逐步对齐曲线
+<img src="../assets/Liger-Kernel/verl-sft/train_global_tokens.png" alt="global_tokens alignment" width="66%"/><br/>
+<strong>图 17</strong> `global_tokens` 逐步对齐曲线
 </p>
 
 ### 4.5 结果汇总
 
-上述分项分析的关键数值汇总如下。
+**表 11** 启用 Liger-Kernel 后的 verl LoRA SFT 整网指标
 
-**表 11** Liger-Kernel 接入后 verl LoRA SFT 整网指标汇总
-
-| 指标 | 实验组 | 对照组 | **相对变化** | 说明 |
+| 指标 | 实验组 | 对照组 | **相对变化** | 备注 |
 |------|--------|--------|--------------|------|
 | **MFU 中位数** | 0.7514 | 0.7216 | **+4.14%** | step 2 起持续高于对照组 |
 | **MFU 均值** | 0.7120 | 0.6835 | **+4.16%** | 579 步中 574 步实验组更高 |
@@ -289,9 +287,9 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 | **val/loss（step 580）** | 2.558 | 2.644 | **-3.27%** | 未出现精度劣化 |
 | **global_tokens 对齐** | 580/580 | 580/580 | **100%** | 对比具有因果有效性 |
 
-### 4.6 整网层小结
+### 4.6 整网小结
 
-**表 12** 整网层评估小结（Liger-Kernel 接入 vs 关闭）
+**表 12** 整网评估小结
 
 | 维度 | 结论 |
 |------|------|
@@ -301,23 +299,23 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 | 精度 | loss 与基线等价，部分指标略优 |
 | 对比有效性 | token 逐步对齐率 **100%** |
 
-## 5 算子层与整网层收益的关联分析
+## 5 算子层与整网层收益关联
 
-第 3 节样例 kernel 的 **1.69×～1.90×** 单点加速，与整网 **+4% MFU** 之间的数量关系，有助于理解 **Liger-Kernel 在 LoRA SFT 场景中的收益边界**——整网收益不仅取决于单个算子多快，还取决于 patch 范围与计算图占比。
+第 3 节样例 kernel 的 **1.69×～1.90×** 单点加速，与整网 **+4% MFU** 之间的数量关系，有助于理解 **Liger-Kernel 在 LoRA SFT 场景中的收益边界**：整网收益不仅取决于单个算子多快，还取决于 patch 范围与计算图占比。
 
-### 5.1 本次 patch 范围与 LoRA 计算图
+### 5.1 Patch 范围与 LoRA 计算图
 
-**本次 Liger patch 覆盖路径（样例）：** RMSNorm（72 次/step）、RoPE（36 次/step）、CrossEntropy（1 次/step）。
+**本次 patch 覆盖路径：** RMSNorm（72 次/step）、RoPE（36 次/step）、CrossEntropy（1 次/step）。
 
 **未纳入本次 patch 的路径：** QKV/O 投影 MatMul、FFN MLP、Attention、LM Head 等；LoRA adapter 主要挂载于 Linear 层，上述算子仍构成单 step 耗时的主体部分。Ascend 后端支持的更多算子（表 1）若后续纳入 patch，整网 MFU 上限可能随之变化。
 
-### 5.2 收益幅度的衰减机制
+### 5.2 收益衰减机制
 
 - 以本次 patch 涉及的样例 kernel 估算，T=8192 下相关子系统累计可节省约 **35.7%** 耗时，但该子系统约占整 step 耗时的 **12%**（Amdahl 定律）。
 - 据此推算整 step 理论提升约 **4.3%**，与实测 MFU **+4.14%** 及图 10、图 11 所示曲线相符。
 - LoRA 进一步降低可训练参数路径在计算图中的占比；扩大 Liger patch 范围或采用全参数 SFT 时，MFU 提升上限可能高于本次观测值。
 
-### 5.3 整网实验的增量观测价值
+### 5.3 整网实验的增量价值
 
 **表 13** 算子层与整网层可观测项对照
 
@@ -378,4 +376,4 @@ Liger-Kernel v0.8.0 的 Ascend 后端已提供较完整的低层算子能力（2
 
 ---
 
-*Data availability.* Liger 0.8.0、commit [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea)；verl commit [`c131c70`](https://github.com/volcengine/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669)；Atlas 800T A3(x86) micro-benchmark 与 **4 卡** verl LoRA SFT 原始训练日志。整网指标均基于逐步原始记录统计，未做平滑或截断。
+*数据可用性.* Liger 0.8.0、commit [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea)；verl commit [`c131c70`](https://github.com/volcengine/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669)；Atlas 800T A3(x86) micro-benchmark 与 **4 卡** verl LoRA SFT 原始训练日志。整网指标均基于逐步原始记录统计，未做平滑或截断。
