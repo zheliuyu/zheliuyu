@@ -2,6 +2,7 @@
 
 <p align="center">
 <a href="https://github.com/zheliuyu">zheliuyu</a><sup>1</sup>,
+<a href="https://github.com/Tcc0403">Tcc0403</a><sup>2</sup>,
 <a href="https://github.com/TianHao324">TianHao324</a>,
 <a href="https://github.com/lowdy1">lowdy1</a>,
 <a href="https://github.com/noemotiovon">noemotiovon</a>,
@@ -13,13 +14,12 @@
 <a href="https://github.com/ji-huazhong">ji-huazhong</a><br>
 <a href="https://github.com/jiaqiw09">jiaqiw09</a>,
 <a href="https://github.com/kiritorl">kiritorl</a>,
-<a href="https://github.com/pillumina">pillumina</a>,
-<a href="https://github.com/xuedinge233">xuedinge233</a>, and
-<a href="https://github.com/Tcc0403">Tcc0403</a>
+<a href="https://github.com/pillumina">pillumina</a>, and
+<a href="https://github.com/xuedinge233">xuedinge233</a>
 <br><br>
 <sup>1</sup> <em>Corresponding author.</em><br>
-<em>Authors are GitHub contributors to NPU-related work in Liger-Kernel.<br>
-Corresponding author listed first; all other authors ranked by merged NPU-related PR count (ties broken alphabetically).</em>
+<sup>2</sup> <em>Liger-Kernel maintainer; merged NPU-related PRs and provided extensive review guidance.</em><br>
+<em>Remaining authors ranked by merged NPU-related PR count (ties broken alphabetically).</em>
 </p>
 
 ## Abstract
@@ -124,37 +124,46 @@ The following three subsections use three high-frequency operators in the Qwen3 
 
 Each Qwen3 decoder layer invokes RMSNorm twice; 36 layers yield **72 calls/step**, the highest frequency among the examples here. At T=8192 in full mode the speedup is **1.69×** with **68.4%** peak memory saved. LoRA does not change per-layer Norm invocation count, so operator-level gains transfer relatively easily to end-to-end training.
 
-Figures 1–3 show RMSNorm full/backward latency and full-mode peak memory vs. sequence length. The Liger implementation stays below the HuggingFace baseline across all T; as T grows from 1024 to 8192, full-mode speedup rises from 1.58× to 1.69×, matching the **8192** cap in Table 3. Backward gains are larger: **5.46×** at T=8192 (3.72 ms → 0.68 ms). LoRA SFT still runs full forward/backward on frozen base weights, so Norm backward optimization directly reduces step time. Peak memory savings are **68.4%** at all four T values (1216 MB → 384 MB at 8192), the highest among the three examples.
+Figures 1–4 show RMSNorm forward/backward/full latency and full-mode peak memory vs. sequence length. The Liger implementation stays below the HuggingFace baseline across all T. At T=8192, forward speedup is **2.07×** (0.68 ms → 0.33 ms), backward **5.46×** (3.72 ms → 0.68 ms), and full mode **1.69×**; as T grows from 1024 to 8192, full-mode speedup rises from 1.58× to 1.69×, matching the **8192** cap in Table 3. LoRA SFT still runs full forward/backward on frozen base weights, so Norm-path optimization directly reduces step time. Peak memory savings are **68.4%** at all four T values (1216 MB → 384 MB at 8192), the highest among the three examples.
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_full_token_length.png" alt="RMSNorm full-mode latency" width="100%"/><br/><strong>Fig. 1</strong> RMSNorm full-mode latency vs. sequence length</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_backward_token_length.png" alt="RMSNorm backward-mode latency" width="100%"/><br/><strong>Fig. 2</strong> RMSNorm backward-mode latency vs. sequence length</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_memory_full_token_length.png" alt="RMSNorm full-mode peak memory" width="100%"/><br/><strong>Fig. 3</strong> RMSNorm full-mode peak memory vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_forward_token_length.png" alt="RMSNorm forward-mode latency" width="100%"/><br/><strong>Fig. 1</strong> RMSNorm forward-mode latency vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_backward_token_length.png" alt="RMSNorm backward-mode latency" width="100%"/><br/><strong>Fig. 2</strong> RMSNorm backward-mode latency vs. sequence length</td>
+</tr>
+<tr>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_full_token_length.png" alt="RMSNorm full-mode latency" width="100%"/><br/><strong>Fig. 3</strong> RMSNorm full-mode latency vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_memory_full_token_length.png" alt="RMSNorm full-mode peak memory" width="100%"/><br/><strong>Fig. 4</strong> RMSNorm full-mode peak memory vs. sequence length</td>
 </tr>
 </table>
 
 #### 3.3.2 RoPE
 
-RoPE is invoked once before each attention layer, **36 calls/step**. At T=8192 in full mode the speedup is **1.25×**. Figures 4–6 show full-mode speedup decreasing slightly from 1.40× at T=1024 to 1.25× at T=8192 while remaining positive throughout; forward mode is stronger at short sequences (**6.73×** at T=1024). Peak memory savings are **28.8%** (500 MB → 356 MB at 8192), lower than RMSNorm and CrossEntropy, consistent with smaller intermediate activations. Under dynamic batching, relative gain increases slightly with tokens per step (consistent with MFU quartile analysis in Figures 10–11).
+RoPE is invoked once before each attention layer, **36 calls/step**. At T=8192 in full mode the speedup is **1.25×**. Figures 5–8 show full-mode speedup decreasing slightly from 1.40× at T=1024 to 1.25× at T=8192 while remaining positive throughout; at T=8192, forward speedup is **2.87×** (0.81 ms → 0.28 ms) and backward **1.84×** (1.03 ms → 0.56 ms); forward mode is stronger at short sequences (**6.73×** at T=1024). Peak memory savings are **28.8%** (500 MB → 356 MB at 8192), lower than RMSNorm and CrossEntropy, consistent with smaller intermediate activations. Under dynamic batching, relative gain increases slightly with tokens per step (consistent with MFU quartile analysis in Figures 13–14).
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_full_token_length.png" alt="RoPE full-mode latency" width="100%"/><br/><strong>Fig. 4</strong> RoPE full-mode latency vs. sequence length</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_forward_token_length.png" alt="RoPE forward-mode latency" width="100%"/><br/><strong>Fig. 5</strong> RoPE forward-mode latency vs. sequence length</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_memory_full_token_length.png" alt="RoPE full-mode peak memory" width="100%"/><br/><strong>Fig. 6</strong> RoPE full-mode peak memory vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_forward_token_length.png" alt="RoPE forward-mode latency" width="100%"/><br/><strong>Fig. 5</strong> RoPE forward-mode latency vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_backward_token_length.png" alt="RoPE backward-mode latency" width="100%"/><br/><strong>Fig. 6</strong> RoPE backward-mode latency vs. sequence length</td>
+</tr>
+<tr>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_full_token_length.png" alt="RoPE full-mode latency" width="100%"/><br/><strong>Fig. 7</strong> RoPE full-mode latency vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_memory_full_token_length.png" alt="RoPE full-mode peak memory" width="100%"/><br/><strong>Fig. 8</strong> RoPE full-mode peak memory vs. sequence length</td>
 </tr>
 </table>
 
 #### 3.3.3 CrossEntropy
 
-CrossEntropy runs once per step (LM head loss) with vocab=128256. Figures 7–9 show full-mode speedup **monotonically increasing** with T: 1.70× at 1024 and **1.90×** at 8192 (22.52 ms → 11.88 ms), aligned with GSM8K dynamic batching and large per-step token counts. Forward speedup at T=8192 is **2.37×**; peak memory savings stay near **40%** (baseline ~20 GB, dominated by vocabulary size). This end-to-end run did not enable `fused_linear_cross_entropy`; that and other Loss kernels already on NPU can be validated with the same two-stage workflow.
+CrossEntropy runs once per step (LM head loss) with vocab=128256. Figures 9–12 show full-mode speedup **monotonically increasing** with T: 1.70× at 1024 and **1.90×** at 8192 (22.52 ms → 11.88 ms), aligned with GSM8K dynamic batching and large per-step token counts. At T=8192, forward speedup is **2.37×** (8.98 ms → 3.79 ms) and backward **1.67×** (13.58 ms → 8.11 ms); peak memory savings stay near **40%** (baseline ~20 GB, dominated by vocabulary size). This end-to-end run did not enable `fused_linear_cross_entropy`; that and other Loss kernels already on NPU can be validated with the same two-stage workflow.
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_full_token_length.png" alt="CrossEntropy full-mode latency" width="100%"/><br/><strong>Fig. 7</strong> CrossEntropy full-mode latency vs. sequence length</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_forward_token_length.png" alt="CrossEntropy forward-mode latency" width="100%"/><br/><strong>Fig. 8</strong> CrossEntropy forward-mode latency vs. sequence length</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_memory_full_token_length.png" alt="CrossEntropy full-mode peak memory" width="100%"/><br/><strong>Fig. 9</strong> CrossEntropy full-mode peak memory vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_forward_token_length.png" alt="CrossEntropy forward-mode latency" width="100%"/><br/><strong>Fig. 9</strong> CrossEntropy forward-mode latency vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_backward_token_length.png" alt="CrossEntropy backward-mode latency" width="100%"/><br/><strong>Fig. 10</strong> CrossEntropy backward-mode latency vs. sequence length</td>
+</tr>
+<tr>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_full_token_length.png" alt="CrossEntropy full-mode latency" width="100%"/><br/><strong>Fig. 11</strong> CrossEntropy full-mode latency vs. sequence length</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_memory_full_token_length.png" alt="CrossEntropy full-mode peak memory" width="100%"/><br/><strong>Fig. 12</strong> CrossEntropy full-mode peak memory vs. sequence length</td>
 </tr>
 </table>
 
@@ -231,45 +240,45 @@ End-to-end comparison uses raw step-wise records from verl logs without smoothin
 
 ### 4.4 Detailed Analysis
 
-**Throughput (MFU):** with Liger-Kernel enabled, MFU improves ~**4%** vs. baseline, consistent with Section 3 example kernels. Figures 10–11 show curves diverging from step 2; step 1 is affected by compile/warmup and excluded from steady-state comparison. After dropping step 1, median MFU is **0.7514 vs 0.7216 (+4.14%)**; treatment wins on 574 of 579 steps. By `global_tokens` quartile, relative MFU gain rises from **+3.88%** (low tokens) to **+4.48%** (high tokens), matching long-sequence behavior of CrossEntropy and RoPE in Section 3.
+**Throughput (MFU):** with Liger-Kernel enabled, MFU improves ~**4%** vs. baseline, consistent with Section 3 example kernels. Figures 13–14 show curves diverging from step 2; step 1 is affected by compile/warmup and excluded from steady-state comparison. After dropping step 1, median MFU is **0.7514 vs 0.7216 (+4.14%)**; treatment wins on 574 of 579 steps. By `global_tokens` quartile, relative MFU gain rises from **+3.88%** (low tokens) to **+4.48%** (high tokens), matching long-sequence behavior of CrossEntropy and RoPE in Section 3.
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="End-to-end MFU" width="100%"/><br/><strong>Fig. 10</strong> End-to-end MFU per step</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="MFU excluding step 1" width="100%"/><br/><strong>Fig. 11</strong> MFU per step (step 1 excluded)</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="End-to-end MFU" width="100%"/><br/><strong>Fig. 13</strong> End-to-end MFU per step</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="MFU excluding step 1" width="100%"/><br/><strong>Fig. 14</strong> MFU per step (step 1 excluded)</td>
 </tr>
 </table>
 
-**NPU memory:** allocated peak **12.421 GB vs 12.476 GB (−0.44%)** with nearly overlapping curves (Fig. 12); reserved peak **46.93 GB** for both (Fig. 13). End-to-end NPU memory remains dominated by paths **not in this Liger patch** (Attention, MatMul, etc.), so savings are smaller than isolated micro-benchmarks—expected.
+**NPU memory:** allocated peak **12.421 GB vs 12.476 GB (−0.44%)** with nearly overlapping curves (Fig. 15); reserved peak **46.93 GB** for both (Fig. 16). End-to-end NPU memory remains dominated by paths **not in this Liger patch** (Attention, MatMul, etc.), so savings are smaller than isolated micro-benchmarks—expected.
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated memory" width="100%"/><br/><strong>Fig. 12</strong> NPU allocated memory per step</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved memory" width="100%"/><br/><strong>Fig. 13</strong> NPU reserved memory per step</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated memory" width="100%"/><br/><strong>Fig. 15</strong> NPU allocated memory per step</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved memory" width="100%"/><br/><strong>Fig. 16</strong> NPU reserved memory per step</td>
 </tr>
 </table>
 
-**Host memory:** treatment stays below baseline from early training; final step **96.26 GB vs 122.29 GB (−21.29%)**, ~26 GB absolute gap (Fig. 14). This cannot be inferred from isolated NPU micro-benchmarks alone; it reflects stack-level effects of fused kernels with verl/FSDP. It matters for long LoRA SFT runs.
+**Host memory:** treatment stays below baseline from early training; final step **96.26 GB vs 122.29 GB (−21.29%)**, ~26 GB absolute gap (Fig. 17). This cannot be inferred from isolated NPU micro-benchmarks alone; it reflects stack-level effects of fused kernels with verl/FSDP. It matters for long LoRA SFT runs.
 
 <p align="center">
 <img src="../assets/Liger-Kernel/verl-sft/perf_cpu_memory_used_gb.png" alt="Host CPU memory" width="66%"/><br/>
-<strong>Fig. 14</strong> Host CPU memory per step
+<strong>Fig. 17</strong> Host CPU memory per step
 </p>
 
-**Accuracy and convergence:** train loss curves largely overlap with treatment slightly lower at the end (Fig. 15); at step 580 **2.479 vs 2.564 (−3.32%)**, mean absolute difference (MAD) **0.038**; val loss **2.558 vs 2.644 (−3.27%)**. Gradient-norm shapes match with no abnormal spikes (Fig. 16), indicating **Liger-Kernel adoption** introduces no observable numerical instability or convergence regression.
+**Accuracy and convergence:** train loss curves largely overlap with treatment slightly lower at the end (Fig. 18); at step 580 **2.479 vs 2.564 (−3.32%)**, mean absolute difference (MAD) **0.038**; val loss **2.558 vs 2.644 (−3.27%)**. Gradient-norm shapes match with no abnormal spikes (Fig. 19), indicating **Liger-Kernel adoption** introduces no observable numerical instability or convergence regression.
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="Training loss" width="100%"/><br/><strong>Fig. 15</strong> Training loss per step</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="Gradient norm" width="100%"/><br/><strong>Fig. 16</strong> Gradient norm per step</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="Training loss" width="100%"/><br/><strong>Fig. 18</strong> Training loss per step</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="Gradient norm" width="100%"/><br/><strong>Fig. 19</strong> Gradient norm per step</td>
 </tr>
 </table>
 
-**Experimental validity:** `global_tokens` match for **580/580** steps (Fig. 17); cumulative tokens 0.03065 B for both groups, ruling out batch-configuration confounds.
+**Experimental validity:** `global_tokens` match for **580/580** steps (Fig. 20); cumulative tokens 0.03065 B for both groups, ruling out batch-configuration confounds.
 
 <p align="center">
 <img src="../assets/Liger-Kernel/verl-sft/train_global_tokens.png" alt="global_tokens alignment" width="66%"/><br/>
-<strong>Fig. 17</strong> `global_tokens` alignment per step
+<strong>Fig. 20</strong> `global_tokens` alignment per step
 </p>
 
 ### 4.5 Results Summary
@@ -312,7 +321,7 @@ Example kernels in Section 3 show **1.69×–1.90×** single-kernel speedups vs.
 ### 5.2 Gain Attenuation
 
 - For example kernels in this patch at T=8192, the patched subsystem saves ~**35.7%** time but accounts for ~**12%** of total step time (Amdahl).
-- Theoretical whole-step gain ~**4.3%**, matching measured MFU **+4.14%** and Figures 10–11.
+- Theoretical whole-step gain ~**4.3%**, matching measured MFU **+4.14%** and Figures 13–14.
 - LoRA further shrinks the trainable-parameter share; broader Liger patches or full-parameter SFT may show higher MFU upside.
 
 ### 5.3 Incremental Value of End-to-End Runs
@@ -344,7 +353,7 @@ Using **rms_norm, rope, cross_entropy** as examples at T=8192 full mode, speedup
 
 With **Liger-Kernel enabled** in 580 steps, 4-card FSDP, and 100% `global_tokens` alignment:
 
-- **Throughput:** median MFU **+4.14%** (0.7514 vs 0.7216); treatment higher on 574 steps; steady separation from step 2 (Table 11, Figs. 10–11);
+- **Throughput:** median MFU **+4.14%** (0.7514 vs 0.7216); treatment higher on 574 steps; steady separation from step 2 (Table 11, Figs. 13–14);
 - **NPU memory:** allocated **−0.44%**, reserved flat; end-to-end memory still dominated by unpatch large-op paths;
 - **Host memory:** final CPU memory **96.26 GB vs 122.29 GB (−21.29%)**, a significant end-to-end-only gain (Table 13);
 - **Accuracy:** train/val loss largely overlap baseline with slightly better final values (~−3.3%); gradient norms stable.

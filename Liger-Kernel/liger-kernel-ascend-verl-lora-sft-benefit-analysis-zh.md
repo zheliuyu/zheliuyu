@@ -2,6 +2,7 @@
 
 <p align="center">
 <a href="https://github.com/zheliuyu">zheliuyu</a><sup>1</sup>,
+<a href="https://github.com/Tcc0403">Tcc0403</a><sup>2</sup>,
 <a href="https://github.com/TianHao324">TianHao324</a>,
 <a href="https://github.com/lowdy1">lowdy1</a>,
 <a href="https://github.com/noemotiovon">noemotiovon</a>,
@@ -13,13 +14,12 @@
 <a href="https://github.com/ji-huazhong">ji-huazhong</a><br>
 <a href="https://github.com/jiaqiw09">jiaqiw09</a>,
 <a href="https://github.com/kiritorl">kiritorl</a>,
-<a href="https://github.com/pillumina">pillumina</a>,
-<a href="https://github.com/xuedinge233">xuedinge233</a>, and
-<a href="https://github.com/Tcc0403">Tcc0403</a>
+<a href="https://github.com/pillumina">pillumina</a>, and
+<a href="https://github.com/xuedinge233">xuedinge233</a>
 <br><br>
-<sup>1</sup> <em>Corresponding author.</em><br>
-<em>Authors are GitHub contributors to NPU-related work in Liger-Kernel.<br>
-Corresponding author listed first; all other authors ranked by merged NPU-related PR count (ties broken alphabetically).</em>
+<sup>1</sup> <em>通讯作者。</em><br>
+<sup>2</sup> <em>Liger-Kernel 维护者；合入 NPU 相关 PR 并在检视过程中提供大量建议。</em><br>
+<em>其余作者按已合入 NPU 相关 PR 数量排序（并列时按字母序）。</em>
 </p>
 
 ## 摘要
@@ -124,37 +124,46 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 
 Qwen3 每个 decoder 层包含 2 次 RMSNorm 调用，36 层合计 **72 次/step**，为本次样例中调用频次最高者。T=8192、full 模式下加速比为 **1.69×**，峰值显存节省 **68.4%**。LoRA 不改变各层 Norm 的执行次数，该路径的算子级收益较易传递至整网层面。
 
-图 1–3 分别给出 RMSNorm full / backward 耗时及 full 模式峰值显存随序列长度的变化：Liger 实现在全 T 区间内均低于 HuggingFace 基线；T 由 1024 增至 8192 时 full 模式加速比由 1.58× 升至 1.69×，与表 3 所列序列长度上限 **8192** 相对应。反向路径收益更为显著，T=8192 时 backward 加速 **5.46×**（3.72 ms → 0.68 ms）。LoRA SFT 仍须对冻结的 base 权重执行完整前向与反向计算，Norm 反向路径的优化可直接反映为 step 耗时下降。峰值显存方面，四个 T 测试点的节省比例均为 **68.4%**（8192 时 1216 MB → 384 MB），为本次三个样例中最高。
+图 1–4 分别给出 RMSNorm forward / backward / full 耗时及 full 模式峰值显存随序列长度的变化：Liger 实现在全 T 区间内均低于 HuggingFace 基线。T=8192 时 forward 加速 **2.07×**（0.68 ms → 0.33 ms），backward 加速 **5.46×**（3.72 ms → 0.68 ms），full 模式加速 **1.69×**；T 由 1024 增至 8192 时 full 模式加速比由 1.58× 升至 1.69×，与表 3 所列序列长度上限 **8192** 相对应。LoRA SFT 仍须对冻结的 base 权重执行完整前向与反向计算，Norm 路径优化可直接反映为 step 耗时下降。峰值显存方面，四个 T 测试点的节省比例均为 **68.4%**（8192 时 1216 MB → 384 MB），为本次三个样例中最高。
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_full_token_length.png" alt="RMSNorm full-mode latency" width="100%"/><br/><strong>图 1</strong> RMSNorm full 模式耗时（随序列长度）</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_backward_token_length.png" alt="RMSNorm backward-mode latency" width="100%"/><br/><strong>图 2</strong> RMSNorm backward 模式耗时（随序列长度）</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_memory_full_token_length.png" alt="RMSNorm full-mode peak memory" width="100%"/><br/><strong>图 3</strong> RMSNorm full 模式峰值显存（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_forward_token_length.png" alt="RMSNorm forward-mode latency" width="100%"/><br/><strong>图 1</strong> RMSNorm forward 模式耗时（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_backward_token_length.png" alt="RMSNorm backward-mode latency" width="100%"/><br/><strong>图 2</strong> RMSNorm backward 模式耗时（随序列长度）</td>
+</tr>
+<tr>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_speed_full_token_length.png" alt="RMSNorm full-mode latency" width="100%"/><br/><strong>图 3</strong> RMSNorm full 模式耗时（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rms_norm_memory_full_token_length.png" alt="RMSNorm full-mode peak memory" width="100%"/><br/><strong>图 4</strong> RMSNorm full 模式峰值显存（随序列长度）</td>
 </tr>
 </table>
 
 #### 3.3.2 RoPE
 
-每层 attention 前调用 1 次，合计 **36 次/step**。T=8192、full 模式加速比为 **1.25×**。图 4–6 显示，随 T 增大 full 模式加速比由 1024 的 1.40× 略降至 8192 的 1.25×，全测试区间均保持正向收益；Forward 路径在短序列上优势更为明显，T=1024 时加速可达 **6.73×**。峰值显存节省 **28.8%**（8192 时 500 MB → 356 MB），低于 RMSNorm 与 CrossEntropy，与 RoPE 中间激活规模较小相符。在 dynamic batch 场景下，单步 token 数越高，相对增益略有上升（与后文图 10、图 11 中 MFU 按 token 四分位统计结果一致）。
+每层 attention 前调用 1 次，合计 **36 次/step**。T=8192、full 模式加速比为 **1.25×**。图 5–8 显示，随 T 增大 full 模式加速比由 1024 的 1.40× 略降至 8192 的 1.25×，全测试区间均保持正向收益；T=8192 时 forward 加速 **2.87×**（0.81 ms → 0.28 ms），backward 加速 **1.84×**（1.03 ms → 0.56 ms）；Forward 路径在短序列上优势更为明显，T=1024 时加速可达 **6.73×**。峰值显存节省 **28.8%**（8192 时 500 MB → 356 MB），低于 RMSNorm 与 CrossEntropy，与 RoPE 中间激活规模较小相符。在 dynamic batch 场景下，单步 token 数越高，相对增益略有上升（与后文图 13、图 14 中 MFU 按 token 四分位统计结果一致）。
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_full_token_length.png" alt="RoPE full-mode latency" width="100%"/><br/><strong>图 4</strong> RoPE full 模式耗时（随序列长度）</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_forward_token_length.png" alt="RoPE forward-mode latency" width="100%"/><br/><strong>图 5</strong> RoPE forward 模式耗时（随序列长度）</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/rope_memory_full_token_length.png" alt="RoPE full-mode peak memory" width="100%"/><br/><strong>图 6</strong> RoPE full 模式峰值显存（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_forward_token_length.png" alt="RoPE forward-mode latency" width="100%"/><br/><strong>图 5</strong> RoPE forward 模式耗时（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_backward_token_length.png" alt="RoPE backward-mode latency" width="100%"/><br/><strong>图 6</strong> RoPE backward 模式耗时（随序列长度）</td>
+</tr>
+<tr>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_speed_full_token_length.png" alt="RoPE full-mode latency" width="100%"/><br/><strong>图 7</strong> RoPE full 模式耗时（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/rope_memory_full_token_length.png" alt="RoPE full-mode peak memory" width="100%"/><br/><strong>图 8</strong> RoPE full 模式峰值显存（随序列长度）</td>
 </tr>
 </table>
 
 #### 3.3.3 CrossEntropy
 
-每 step 调用 1 次（LM head loss），词表规模 vocab=128256。图 7–9 显示，full 模式加速比随 T **单调递增**：1024 时为 1.70×，8192 时为 **1.90×**（22.52 ms → 11.88 ms），与 GSM8K dynamic batch 及较大单步 token 量的训练特征相符。T=8192 时 forward 加速 **2.37×**；峰值显存节省稳定在 **40%**（基线绝对值约 20 GB，受词表维度影响）。本次整网实验未启用 `fused_linear_cross_entropy`；该算子及其他 Loss 类 kernel 虽已在 NPU 后端实现，其整网收益可沿用本报告两阶段方法另行验证。
+每 step 调用 1 次（LM head loss），词表规模 vocab=128256。图 9–12 显示，full 模式加速比随 T **单调递增**：1024 时为 1.70×，8192 时为 **1.90×**（22.52 ms → 11.88 ms），与 GSM8K dynamic batch 及较大单步 token 量的训练特征相符。T=8192 时 forward 加速 **2.37×**（8.98 ms → 3.79 ms），backward 加速 **1.67×**（13.58 ms → 8.11 ms）；峰值显存节省稳定在 **40%**（基线绝对值约 20 GB，受词表维度影响）。本次整网实验未启用 `fused_linear_cross_entropy`；该算子及其他 Loss 类 kernel 虽已在 NPU 后端实现，其整网收益可沿用本报告两阶段方法另行验证。
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_full_token_length.png" alt="CrossEntropy full-mode latency" width="100%"/><br/><strong>图 7</strong> CrossEntropy full 模式耗时（随序列长度）</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_forward_token_length.png" alt="CrossEntropy forward-mode latency" width="100%"/><br/><strong>图 8</strong> CrossEntropy forward 模式耗时（随序列长度）</td>
-<td align="center" width="33%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_memory_full_token_length.png" alt="CrossEntropy full-mode peak memory" width="100%"/><br/><strong>图 9</strong> CrossEntropy full 模式峰值显存（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_forward_token_length.png" alt="CrossEntropy forward-mode latency" width="100%"/><br/><strong>图 9</strong> CrossEntropy forward 模式耗时（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_backward_token_length.png" alt="CrossEntropy backward-mode latency" width="100%"/><br/><strong>图 10</strong> CrossEntropy backward 模式耗时（随序列长度）</td>
+</tr>
+<tr>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_speed_full_token_length.png" alt="CrossEntropy full-mode latency" width="100%"/><br/><strong>图 11</strong> CrossEntropy full 模式耗时（随序列长度）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/benchmark/cross_entropy_memory_full_token_length.png" alt="CrossEntropy full-mode peak memory" width="100%"/><br/><strong>图 12</strong> CrossEntropy full 模式峰值显存（随序列长度）</td>
 </tr>
 </table>
 
@@ -231,45 +240,45 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 
 ### 4.4 详细分析
 
-**吞吐（MFU）：** 启用 Liger-Kernel 后，实验组 MFU 相对对照组提升约 **4%**，与第 3 节样例 kernel 的加速方向一致。图 10、图 11 显示，两条曲线自 step 2 起分离，实验组稳定运行于较高区间；step 1 受编译与预热影响，不宜作为稳态对比依据。剔除 step 1 后，MFU 中位数为 **0.7514 vs 0.7216（+4.14%）**，579 步中 574 步实验组更高。按 `global_tokens` 四分位统计，MFU 相对提升由低 token 步的 **+3.88%** 增至高 token 步的 **+4.48%**，与样例中 CrossEntropy、RoPE 在长序列下的单点收益特征一致。
+**吞吐（MFU）：** 启用 Liger-Kernel 后，实验组 MFU 相对对照组提升约 **4%**，与第 3 节样例 kernel 的加速方向一致。图 13、图 14 显示，两条曲线自 step 2 起分离，实验组稳定运行于较高区间；step 1 受编译与预热影响，不宜作为稳态对比依据。剔除 step 1 后，MFU 中位数为 **0.7514 vs 0.7216（+4.14%）**，579 步中 574 步实验组更高。按 `global_tokens` 四分位统计，MFU 相对提升由低 token 步的 **+3.88%** 增至高 token 步的 **+4.48%**，与样例中 CrossEntropy、RoPE 在长序列下的单点收益特征一致。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="End-to-end MFU" width="100%"/><br/><strong>图 10</strong> 整网 MFU 逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="MFU excluding step 1" width="100%"/><br/><strong>图 11</strong> 整网 MFU 逐步曲线（剔除 step 1）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="End-to-end MFU" width="100%"/><br/><strong>图 13</strong> 整网 MFU 逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="MFU excluding step 1" width="100%"/><br/><strong>图 14</strong> 整网 MFU 逐步曲线（剔除 step 1）</td>
 </tr>
 </table>
 
-**NPU 显存：** allocated 峰值 **12.421 GB vs 12.476 GB（-0.44%）**，逐步曲线近乎重合（图 12）；reserved 峰值均为 **46.93 GB**（图 13）。整网 NPU 显存仍主要由 Attention、MatMul 等 **未纳入本次 Liger patch** 的路径主导，故节省幅度低于第 3 节 micro-benchmark 中的单点结果，属预期现象。
+**NPU 显存：** allocated 峰值 **12.421 GB vs 12.476 GB（-0.44%）**，逐步曲线近乎重合（图 15）；reserved 峰值均为 **46.93 GB**（图 16）。整网 NPU 显存仍主要由 Attention、MatMul 等 **未纳入本次 Liger patch** 的路径主导，故节省幅度低于第 3 节 micro-benchmark 中的单点结果，属预期现象。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated memory" width="100%"/><br/><strong>图 12</strong> NPU allocated 显存逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved memory" width="100%"/><br/><strong>图 13</strong> NPU reserved 显存逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated memory" width="100%"/><br/><strong>图 15</strong> NPU allocated 显存逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved memory" width="100%"/><br/><strong>图 16</strong> NPU reserved 显存逐步曲线</td>
 </tr>
 </table>
 
-**Host 内存：** 实验组自训练初期即低于对照组，末步为 **96.26 GB vs 122.29 GB（-21.29%）**，绝对差约 26 GB（图 14）。该指标无法由 isolated micro-benchmark 直接解释，属于 **Liger-Kernel 接入后** 训练栈层面的观测现象，对长周期 LoRA SFT 的资源规划具有实际意义。
+**Host 内存：** 实验组自训练初期即低于对照组，末步为 **96.26 GB vs 122.29 GB（-21.29%）**，绝对差约 26 GB（图 17）。该指标无法由 isolated micro-benchmark 直接解释，属于 **Liger-Kernel 接入后** 训练栈层面的观测现象，对长周期 LoRA SFT 的资源规划具有实际意义。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/verl-sft/perf_cpu_memory_used_gb.png" alt="Host CPU memory" width="66%"/><br/>
-<strong>图 14</strong> Host CPU 内存逐步曲线
+<strong>图 17</strong> Host CPU 内存逐步曲线
 </p>
 
-**精度与收敛：** 训练 loss 曲线整体重合，实验组末段略低（图 15）；step 580 处 **2.479 vs 2.564（-3.32%）**，逐步平均绝对差（MAD）为 **0.038**；验证 loss **2.558 vs 2.644（-3.27%）**。梯度范数曲线形态一致，未见异常尖峰（图 16），表明 **Liger-Kernel 接入** 未引入可观测的数值不稳定或收敛劣化。
+**精度与收敛：** 训练 loss 曲线整体重合，实验组末段略低（图 18）；step 580 处 **2.479 vs 2.564（-3.32%）**，逐步平均绝对差（MAD）为 **0.038**；验证 loss **2.558 vs 2.644（-3.27%）**。梯度范数曲线形态一致，未见异常尖峰（图 19），表明 **Liger-Kernel 接入** 未引入可观测的数值不稳定或收敛劣化。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="Training loss" width="100%"/><br/><strong>图 15</strong> 训练 loss 逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="Gradient norm" width="100%"/><br/><strong>图 16</strong> 梯度范数逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="Training loss" width="100%"/><br/><strong>图 18</strong> 训练 loss 逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="Gradient norm" width="100%"/><br/><strong>图 19</strong> 梯度范数逐步曲线</td>
 </tr>
 </table>
 
-**实验有效性：** 580/580 step 的 `global_tokens` 完全一致（图 17），累计 token 均为 0.03065 B，可排除 batch 配置差异对对比结果的干扰。
+**实验有效性：** 580/580 step 的 `global_tokens` 完全一致（图 20），累计 token 均为 0.03065 B，可排除 batch 配置差异对对比结果的干扰。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/verl-sft/train_global_tokens.png" alt="global_tokens alignment" width="66%"/><br/>
-<strong>图 17</strong> `global_tokens` 逐步对齐曲线
+<strong>图 20</strong> `global_tokens` 逐步对齐曲线
 </p>
 
 ### 4.5 结果汇总
@@ -312,7 +321,7 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 ### 5.2 收益衰减机制
 
 - 以本次 patch 涉及的样例 kernel 估算，T=8192 下相关子系统累计可节省约 **35.7%** 耗时，但该子系统约占整 step 耗时的 **12%**（Amdahl 定律）。
-- 据此推算整 step 理论提升约 **4.3%**，与实测 MFU **+4.14%** 及图 10、图 11 所示曲线相符。
+- 据此推算整 step 理论提升约 **4.3%**，与实测 MFU **+4.14%** 及图 13、图 14 所示曲线相符。
 - LoRA 进一步降低可训练参数路径在计算图中的占比；扩大 Liger patch 范围或采用全参数 SFT 时，MFU 提升上限可能高于本次观测值。
 
 ### 5.3 整网实验的增量价值
@@ -344,7 +353,7 @@ Liger-Kernel [v0.8.0](https://github.com/linkedin/Liger-Kernel/releases/tag/v0.8
 
 在 580 step、4 卡 FSDP、global_tokens 100% 对齐的对照实验中，**启用 Liger-Kernel** 后：
 
-- **吞吐：** MFU 中位数相对提升 **4.14%**（0.7514 vs 0.7216），579 步中 574 步实验组更高，稳态曲线自 step 2 起持续分离（见表 11、图 10–11）；
+- **吞吐：** MFU 中位数相对提升 **4.14%**（0.7514 vs 0.7216），579 步中 574 步实验组更高，稳态曲线自 step 2 起持续分离（见表 11、图 13–14）；
 - **NPU 显存：** allocated 峰值略降 **0.44%**，reserved 持平，整网显存仍由未 patch 的大算子路径主导；
 - **Host 内存：** 末步 CPU 内存 **96.26 GB vs 122.29 GB（-21.29%）**，为整网实验方可观测的显著收益（见表 13）；
 - **精度：** train/loss、val/loss 曲线与对照组整体重合，末步略优（-3.3% 量级），梯度范数形态一致，未见数值不稳定或收敛劣化。
