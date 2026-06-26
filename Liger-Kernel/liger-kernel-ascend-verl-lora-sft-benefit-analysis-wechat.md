@@ -11,7 +11,7 @@
 **主要结论：**
 
 - **算子层：** 与 verl patch 对齐的三项 kernel（RMSNorm / RoPE / CrossEntropy），T=8192、full 模式下加速比 **1.25×～2.06×**，峰值 NPU 显存节省 **28.8%～68.4%**
-- **整网层：** 4 卡 FSDP、580 step、`global_tokens` 100% 对齐 —— MFU 中位数 **+4.14%**，Host CPU 内存末步 **-21.29%**，train/val loss 与对照组整体重合
+- **整网层：** 4 卡 FSDP、580 step、`global_tokens` 100% 对齐 —— MFU 中位数 **+4.14%**（579 步中 574 步更高），Host CPU 内存均值 **-11.35%**、末步 **-21.29%**，train/val loss 与对照组整体重合
 - **方法论：** 算子层评估接入可行性；整网实验验证收益能否稳定传递至 step 级指标
 
 ---
@@ -93,7 +93,7 @@ Qwen3-8B 共 36 层，每层 2 次 RMSNorm，合计 72 次/step。T=8192 下 ful
 
 **评估目标：** Liger-Kernel 接入 4 卡 FSDP + LoRA 全链路后，吞吐、内存与精度指标的变化。
 
-
+对照数据来自使用 verl 训练日志中的逐步原始记录，未做平滑或截断。评估指标包括 `train/mfu`、`perf/max_memory_*`、`perf/cpu_memory_used_gb`、`train/loss`、`val/loss`、`train/grad_norm` 与 `train/global_tokens`。
 
 ### 3.1 指标汇总
 
@@ -101,38 +101,75 @@ Qwen3-8B 共 36 层，每层 2 次 RMSNorm，合计 72 次/step。T=8192 下 ful
 |------|--------|--------|----------|
 | MFU 中位数 | 0.7514 | 0.7216 | +4.14% |
 | MFU 均值 | 0.7129 | 0.6843 | +4.17% |
+| MFU 更高步数（剔除 step 1） | 574 / 579 | — | 99.1% |
 | NPU allocated 峰值 | 12.421 GB | 12.476 GB | -0.44% |
+| NPU allocated 差值中位数 | — | — | -56 MB |
 | NPU reserved 峰值 | 46.93 GB | 46.93 GB | 持平 |
+| Host CPU 内存（均值） | 95.70 GB | 107.95 GB | -11.35% |
 | Host CPU 内存（末步） | 96.26 GB | 122.29 GB | -21.29% |
 | train/loss（step 580） | 2.479 | 2.564 | -3.32% |
 | val/loss（step 580） | 2.558 | 2.644 | -3.27% |
+| train/loss 逐步最大绝对差 | — | — | 0.097 |
 | global_tokens 对齐 | 580/580 | 580/580 | 100% |
-
-剔除 step 1（编译与预热）后，579 步中 574 步实验组 MFU 更高。按 `global_tokens` 四分位统计，MFU 相对提升至 +4.48%，与 CrossEntropy、RoPE 在长序列下的单点收益特征一致（见图 4）。
-
-<p align="center">
-<img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" width="88%"/><br/>
-<em>图 4  整网 MFU 逐步曲线（剔除 step 1）</em>
-</p>
+| 累计 tokens | 0.03065 B | 0.03065 B | 一致 |
 
 ### 3.2 分项解读
 
-**吞吐（MFU）：** 相对提升约 4%，自 step 2 起两条曲线稳定分离（图 4），与算子层加速方向一致。
+**吞吐（MFU）**
 
-**NPU 显存：** allocated 峰值略降 0.44%；reserved 持平。整网显存仍由 Attention、MatMul 等未纳入 patch 的路径主导，节省幅度低于 micro-benchmark 单点结果，属预期现象。
+step 1 受编译与预热影响，两组 MFU 均偏低（0.203 vs 0.229），不宜作为稳态对比依据。自 step 2 起两条曲线稳定分离，实验组持续运行于较高区间（见图 4）。剔除 step 1 后，579 步中 **574 步**实验组 MFU 更高；其余 5 步劣势均小于 0.005，属 dynamic batch 与调度噪声。
 
-**Host 内存：** 末步相对下降 21.29%（绝对差约 26 GB，见图 5）。该指标无法由 isolated micro-benchmark 直接解释，属于整网训练栈层面的观测结果，对长周期 LoRA SFT 的资源规划具有实际意义。
+按 `global_tokens` 四分位统计，MFU 相对提升由短 batch 的 **+3.88%** 增至长 batch 的 **+4.48%**，与 CrossEntropy、RoPE 在长序列下的单点收益特征一致：
+
+| 分位 | token 范围 | MFU 相对提升 |
+|------|------------|--------------|
+| Q1 | 48,472 – 52,102 | +3.88% |
+| Q2 | 52,102 – 52,871 | +4.15% |
+| Q3 | 52,873 – 53,592 | +4.46% |
+| Q4 | 53,602 – 56,388 | +4.48% |
+
+<p align="center">
+<img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" width="48%"/>
+<img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" width="48%"/><br/>
+<em>图 4  整网 MFU 逐步曲线（左：含 step 1；右：剔除 step 1）</em>
+</p>
+
+**NPU 显存**
+
+allocated 峰值略降 0.44%，逐步曲线近乎重合，中位差约 **-56 MB**（图 5 左）；reserved 峰值均为 46.93 GB，全程无差异（图 5 右）。整网 NPU 显存仍由 Attention、MatMul、LM Head 等未纳入 patch 的路径主导；算子 micro-benchmark 中的 workspace 节省在整 step 内时间复用，峰值取 max 而非 sum，故整网 allocated 降幅远低于单 kernel 的 28.8%～68.4%，属预期现象。
+
+<p align="center">
+<img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" width="48%"/>
+<img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" width="48%"/><br/>
+<em>图 5  NPU allocated / reserved 显存逐步曲线</em>
+</p>
+
+**Host 内存**
+
+实验组自训练初期即低于对照组：step 1 即低 8.4%，全程均值低 11.35%，末步低 21.29%（绝对差约 26 GB）。对照组曲线在训练中后期持续抬升，实验组更平（见图 6）。该指标无法由 isolated micro-benchmark 直接解释，属于整网训练栈层面的观测结果，对长周期 LoRA SFT 的资源规划具有实际意义。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/verl-sft/perf_cpu_memory_used_gb.png" width="72%"/><br/>
-<em>图 5  Host CPU 内存逐步曲线</em>
+<em>图 6  Host CPU 内存逐步曲线</em>
 </p>
 
-**精度与收敛：** train/val loss 曲线整体重合（图 6），逐步平均绝对差（MAD）0.038；step 580 处 train/val loss 略优于对照组。梯度范数形态一致，未见数值不稳定或收敛劣化迹象。
+**精度与收敛**
+
+train/val loss 曲线整体重合（图 7 左），逐步平均绝对差（MAD）0.038，最大绝对差 0.097；step 580 处 train/val loss 略优于对照组。梯度范数自约 1.0 逐步上升至末期 2.3～2.6，两组形态平行，未见异常尖峰（图 7 右），表明 Liger-Kernel 接入未引入可观测的数值不稳定或收敛劣化。
 
 <p align="center">
-<img src="../assets/Liger-Kernel/verl-sft/train_loss.png" width="72%"/><br/>
-<em>图 6  训练 loss 逐步曲线</em>
+<img src="../assets/Liger-Kernel/verl-sft/train_loss.png" width="48%"/>
+<img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" width="48%"/><br/>
+<em>图 7  训练 loss 与梯度范数逐步曲线</em>
+</p>
+
+**实验有效性**
+
+580/580 step 的 `global_tokens` 完全一致，累计 token 均为 **0.03065 B**（图 8），可排除 batch 配置、数据顺序或 dynamic batch 切分差异对 MFU、loss、内存对比的干扰，保证对照具有因果有效性。
+
+<p align="center">
+<img src="../assets/Liger-Kernel/verl-sft/train_global_tokens.png" width="72%"/><br/>
+<em>图 8  `global_tokens` 逐步对齐曲线</em>
 </p>
 
 ---
@@ -151,8 +188,11 @@ Qwen3-8B 共 36 层，每层 2 次 RMSNorm，合计 72 次/step。T=8192 下 ful
 |--------|-----------------|---------------|
 | 单 kernel 加速比 | 可测 | — |
 | 整网 MFU 幅度 | 可估算 | +4.14%（实测） |
-| Host CPU 内存 | 不可测 | -21.29%（实测） |
+| NPU allocated 峰值 | 单 kernel 28.8%～68.4% | -0.44%（实测） |
+| Host CPU 内存 | 不可测 | -21.29% 末步（实测） |
 | 训练 loss 等价性 | 不可测 | MAD 0.038（实测） |
+| 梯度范数稳定性 | 不可测 | 形态平行（实测） |
+| global_tokens 对齐 | 不可测 | 580/580（实测） |
 
 算子层验证 Ascend 后端能力；整网层验证 verl 接入效果。二者相互补充，构成从 kernel 到训练框架的完整评估链条。
 
@@ -162,7 +202,7 @@ Qwen3-8B 共 36 层，每层 2 次 RMSNorm，合计 72 次/step。T=8192 下 ful
 
 1. Liger-Kernel Ascend 后端已提供较完整的低层算子能力，可提供给与 verl LoRA SFT 类似任务开启 rms_norm、rope、cross_entropy 等使用。
 2. 算子层：T=8192 下三项分别实现 1.82× / 1.25× / 2.06× 加速，峰值 NPU 显存节省 28.8%～68.4%。
-3. 整网层：580 step、4 卡 FSDP、token 100% 对齐条件下，MFU +4.14%，Host 内存 -21.29%，loss 无劣化。
+3. 整网层：580 step、4 卡 FSDP、token 100% 对齐条件下，MFU +4.14%，Host 内存均值 -11.35%、末步 -21.29%，loss 与 grad_norm 无劣化。
 4. 整网 MFU 增益与算子层数据在 Amdahl 框架下自洽；Host 内存下降为整网实验方可观测的附加收益。
 5. 全参数 SFT、多节点集群、RLHF/DPO 等场景尚未覆盖；MFU 幅度可能因 patch 范围与计算图组成不同而与本次 LoRA 场景存在差异。
 
