@@ -78,8 +78,9 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 | 项目 | 配置 |
 |------|------|
 | 硬件 | Atlas 800T A3(x86) |
+| 算子 benchmark / profiling | 单 NPU isolated micro-benchmark（与整网同机型） |
 | 整网并行 | 1 node × 4 NPU（FSDP，见表 14） |
-| Liger-Kernel | [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea) |
+| Liger-Kernel | [`3bb3b3f`](https://github.com/linkedin/Liger-Kernel/commit/3bb3b3fae6d0b2356116034a7f0ee1dde0ea71ea) |
 | verl | [`c131c70`](https://github.com/verl-project/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669) |
 | 精度 | bfloat16 |
 | 模型 | Qwen3-8B（hidden=4096，GQA 32 heads / 8 kv heads，vocab≈128256） |
@@ -90,7 +91,7 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 
 目标：在 Liger-Kernel 官方 micro-benchmark 与 NPU profiling 框架下，对评测算子集六项算子评估融合实现相对 HuggingFace / PyTorch 基线的性能、显存与 launch 行为。其中 rms_norm、rope、cross_entropy 与第 4 节 verl 整网 patch 对齐；swiglu、fused_moe、fused_linear_cross_entropy 作为 Ascend 后端扩展能力一并给出，供后续扩大 patch 范围时参考。文中以「融合实现」指 Liger-Kernel Ascend Triton 融合路径，以「基线实现」指各算子对应的 HuggingFace 或 PyTorch 参考实现。
 
-本节组织为：§3.1–3.5 micro-benchmark（图 1–27）；§3.6 NPU profiling（图 28–48）；§3.7 机制归纳。
+本节组织为：§3.1–3.5 micro-benchmark（图 1–27）；§3.6 NPU profiling（图 28–45）；§3.7 机制归纳。
 
 ### 3.1 实验设计
 
@@ -132,7 +133,7 @@ Liger-Kernel 在 [v0.8.0 release](https://github.com/linkedin/Liger-Kernel/relea
 
 ### 3.3 逐算子 Benchmark 分析
 
-以下各小节均含 4 张扫点曲线（forward / backward / full 延迟 + full 峰值显存）。横轴为 token 长度或总 token 数；纵轴为毫秒或 MB。绿色（融合实现）曲线全程低于红色（基线）时表示该模式下稳定收益。
+以下各小节均含 4 张扫点曲线（forward / backward / full 延迟 + full 峰值显存）。横轴为 token 长度或总 token 数；纵轴为毫秒或 MB。
 
 #### 3.3.1 RMSNorm
 
@@ -151,7 +152,7 @@ Qwen 类模型每层 2 次 RMSNorm，为调用频次最高的 Norm 算子之一�
 
 #### 3.3.2 RoPE
 
-每层 attention 前 1 次 RoPE。T=8192 时 full 1.25×，显存 28.8%。图 5–6 显示 forward 在短序列上优势更大（T=1024 时 forward 可达约 6×+），长序列趋于平缓；图 7–8 整体仍维持融合实现优于基线。收益小于 RMSNorm/CE，因基线本身为轻量 elementwise 链，融合主要减少 launch 与临时 buffer（见第 3.6.5 节 profiling）。
+每层 attention 前 1 次 RoPE。T=8192 时 full 1.25×，显存 28.8%。图 5–6 显示 forward 在短序列上优势更大（T=1024 时 forward 约 5.5×），长序列趋于平缓；图 7–8 整体仍维持融合实现优于基线。收益小于 RMSNorm/CE，因基线本身为轻量 elementwise 链，融合主要减少 launch 与临时 buffer（见第 3.6.5 节 profiling）。
 
 <table align="center">
 <tr>
@@ -166,7 +167,7 @@ Qwen 类模型每层 2 次 RMSNorm，为调用频次最高的 Norm 算子之一�
 
 #### 3.3.3 CrossEntropy
 
-词表 V≈128256 时，基线 LogSoftmax 需把 `[BT,V]` log 概率表整块写入显存。T=8192 时 full 2.06×，显存 40%；图 9–11 显示加速比随 BT 单调上升（1024→8192：full 约 1.7×→2.1×），与大 batch token 训练场景一致。图 12 显存节省在各 BT 下稳定在约 40%。
+词表 V≈128256 时，基线 LogSoftmax 需把 `[BT,V]` log 概率表整块写入显存。T=8192 时 full 2.06×，显存 40%；图 9–11 显示加速比随 BT 单调上升（1024→8192：full 约 1.8×→2.1×），与大 batch token 训练场景一致。图 12 显存节省在各 BT 下稳定在约 40%。
 
 <table align="center">
 <tr>
@@ -181,7 +182,7 @@ Qwen 类模型每层 2 次 RMSNorm，为调用频次最高的 Norm 算子之一�
 
 #### 3.3.4 SwiGLU
 
-FFN 中 gate/up/down 投影 + SiLU 激活。瓶颈在 MatMul（profiling 中占 >90% device 时间），故 full 仅 1.04×，显存 9%。图 13–16 中两曲线几乎重合，说明融合主要优化 elementwise 与少量中间激活，无法大幅改变 Cube 受限的 MatMul 耗时。
+FFN 中 gate/up/down 投影 + SiLU 激活。瓶颈在 MatMul（profiling 中占 >88% device 时间），故 full 仅 1.04×，显存 9%。图 13–16 中两曲线几乎重合，说明融合主要优化 elementwise 与少量中间激活，无法大幅改变 Cube 受限的 MatMul 耗时。
 
 <table align="center">
 <tr>
@@ -228,7 +229,7 @@ FFN 中 gate/up/down 投影 + SiLU 激活。瓶颈在 MatMul（profiling 中占 
 
 在完成图 1–24 的逐算子扫点分析后，本节将表 5–6 的关键指标压缩为三组总览图，用于跨算子横向对比。读图约定：绿色柱 = 融合实现，红色/橙色柱 = 基线；加速比图中虚线 y = 1.0 表示与基线持平。
 
-图 25 左子图为评测算子集各成员在最大 benchmark 规模下的 full（forward+backward）加速比。柱高大于 1 表示融合实现更快；RMSNorm、CrossEntropy、Fused MoE 明显超过 2.0× 参考线，SwiGLU 与 1.0× 几乎重合。右子图为峰值 NPU 显存节省比例（\((B-L)/B\)）；正值表示融合实现更省显存，Fused Linear CE 为唯一负值柱（约 −10%），与第 3.3.6 节分析一致。
+图 25 左子图为评测算子集各成员在最大 benchmark 规模下的 full（forward+backward）加速比。柱高大于 1 表示融合实现更快；RMSNorm、CrossEntropy、Fused MoE 明显超过 2.0× 参考线，SwiGLU 与 1.0× 几乎重合。右子图为峰值 NPU 显存节省比例（\((B-L)/B\)）；正值表示融合实现更省显存，Fused Linear CE 为唯一负值柱（约 −10%），与第 3.3.6 节分析一致；RoPE 柱顶四舍五入为 29%，表 5 精确值为 28.8%。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/profiling/10_suite_speedup_memory.png" alt="Benchmark operator suite speedup and memory" width="92%"/><br/>
@@ -256,7 +257,7 @@ FFN 中 gate/up/down 投影 + SiLU 激活。瓶颈在 MatMul（profiling 中占 
 | 维度 | 结论 |
 |------|------|
 | 高价值算子 | RMSNorm、CrossEntropy、Fused MoE：加速 1.8×～2.5×，显存 25%～68% |
-| 中等收益 | RoPE：1.25× / 29% |
+| 中等收益 | RoPE：1.25× / 28.8% |
 | 边际收益 | SwiGLU：1.04× / 9%（MatMul 瓶颈） |
 | 反例 | Fused Linear CE：速度 1.08×，显存 -10% |
 | backward | RMSNorm、Fused MoE 的 backward 分项加速显著高于 forward |
@@ -297,7 +298,7 @@ Launch 统计口径：本文所称 launch 指 host 向 NPU 下发一次 device k
 | Fused MoE | 81 | 22,704‡ | 5617‡ | 6800‡ | 融合 kernel 对比 Python 循环 |
 | Fused Linear CE | 64 | 49 | 7162† | 6192† | MatMul 主导；融合实现 plain CE 多 buffer |
 
-† BT=4096 profiling；‡ T=8192 profiling（benchmark 最大 T=32768）。
+† BT=4096 profiling；‡ T=8192 profiling（benchmark 最大 T=32768）。CE 的 compute launch 统计中，融合路径因 fwd/bwd 辅助 kernel 略多于 torch 侧少量大 kernel，属口径现象而非融合失效。
 
 ### 3.6.3 RMSNorm：单次迭代时间线与 launch 分解
 
@@ -347,12 +348,12 @@ Launch 统计口径：本文所称 launch 指 host 向 NPU 下发一次 device k
 
 RoPE 在 attention 前对 Q/K 施加旋转变换。Profiling（T=8192）显示融合实现 168 次 compute launch、累计 device 时间约 12 ms（3 active steps）；HuggingFace 基线 567 次、约 31 ms。差距小于 RMSNorm，因基线本身为轻量 elementwise，但 launch 数仍为 3.4×。
 
-图 38 堆叠柱中，融合实现侧 `_triton_rope_npu` 融合 kernel（深绿）占 compute 时间主体；HuggingFace 基线侧 Mul/Add/Transpose/Cat（黄色系）分散在多次 aclnn 调用中。图 39 截取单次 fwd+bwd 迭代：融合实现仅 1 条主融合 kernel（>20 µs）；HuggingFace 基线列出 Mul、Add、Transpose 等多条细粒度 kernel，与 benchmark 中 1.25× full 加速（第 3.3.2 节）一致。
+图 35 堆叠柱中，融合实现侧 `_triton_rope_npu` 融合 kernel（深绿）占 compute 时间主体；HuggingFace 基线侧 Mul/Add/Transpose/Cat（黄色系）分散在多次 aclnn 调用中。图 36 截取单次 fwd+bwd 迭代：融合实现仅 1 条主融合 kernel（>20 µs）；HuggingFace 基线列出 Mul、Add、Transpose 等多条细粒度 kernel，与 benchmark 中 1.25× full 加速（第 3.3.2 节）一致。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/14_rope_duration_breakdown.png" alt="RoPE duration breakdown" width="100%"/><br/><strong>图 38</strong> RoPE T=8192 · device 时间构成（3 active steps）</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/15_rope_single_iteration.png" alt="RoPE single iteration" width="100%"/><br/><strong>图 39</strong> RoPE · 单次迭代重 kernel 耗时对比
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/14_rope_duration_breakdown.png" alt="RoPE duration breakdown" width="100%"/><br/><strong>图 35</strong> RoPE T=8192 · device 时间构成（3 active steps）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/15_rope_single_iteration.png" alt="RoPE single iteration" width="100%"/><br/><strong>图 36</strong> RoPE · 单次迭代重 kernel 耗时对比
 </td>
 </tr>
 </table>
@@ -361,67 +362,67 @@ RoPE 在 attention 前对 Q/K 施加旋转变换。Profiling（T=8192）显示�
 
 SwiGLU FFN 含 gate/up/down 三次 MatMul 与 SiLU×Gate elementwise。Profiling 显示 MatMul 累计约 260 ms/3 steps，占融合实现与 HuggingFace 基线 device 时间的 >88%；Triton 融合 kernel（`_swiglu_forward/backward_kernel_flat`）合计仅约 15 ms。
 
-因此 launch 数（融合实现 225 对比 HuggingFace 基线 261）与 device 时间构成（图 40）几乎平行，benchmark full 加速仅 1.04×（第 3.3.4 节）在 profiling 层得到直接印证：优化空间不在 MatMul，而在已高度优化的 Cube 算子。
+因此 launch 数（融合实现 225 对比 HuggingFace 基线 261）与 device 时间构成（图 37）几乎平行，benchmark full 加速仅 1.04×（第 3.3.4 节）在 profiling 层得到直接印证：优化空间不在 MatMul，而在已高度优化的 Cube 算子。
 
-图 41 单次迭代视角下，两侧最高柱均为 MatMulV3；融合实现侧额外的融合 kernel 耗时相对 MatMul 可忽略。
+图 38 单次迭代视角下，两侧最高柱均为 MatMulV3；融合实现侧额外的融合 kernel 耗时相对 MatMul 可忽略。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/16_swiglu_duration_breakdown.png" alt="SwiGLU duration breakdown" width="100%"/><br/><strong>图 40</strong> SwiGLU T=8192 · device 时间构成（3 active steps）</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/17_swiglu_single_iteration.png" alt="SwiGLU single iteration" width="100%"/><br/><strong>图 41</strong> SwiGLU · 单次迭代 MatMul 对比融合 elementwise
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/16_swiglu_duration_breakdown.png" alt="SwiGLU duration breakdown" width="100%"/><br/><strong>图 37</strong> SwiGLU T=8192 · device 时间构成（3 active steps）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/17_swiglu_single_iteration.png" alt="SwiGLU single iteration" width="100%"/><br/><strong>图 38</strong> SwiGLU · 单次迭代 MatMul 对比融合 elementwise
 </td>
 </tr>
 </table>
 
 ### 3.6.7 Fused MoE：Python expert 循环的 launch 爆炸
 
-Fused MoE 是评测算子集中 profiling 差异最极端的成员。HuggingFace 基线采用 Python for-loop 逐 expert dispatch（`index_add_` / `IndexPut` / `NonZero` 等），3 active steps 内产生 22,704 次 compute launch，累计 device 时间约 2.1 s（T=8192 profiling）；融合实现仅 81 次 launch、约 338 ms，且时间几乎全部由 `_fused_up_proj_swiglu`、`_moe_router_scatter`、`_moe_bwd_*` 等融合 kernel 构成（图 42 深绿柱）。
+Fused MoE 是评测算子集中 profiling 差异最极端的成员。HuggingFace 基线采用 Python for-loop 逐 expert dispatch（`index_add_` / `IndexPut` / `NonZero` 等），3 active steps 内产生 22,704 次 compute launch，累计 device 时间约 2.1 s（T=8192 profiling）；融合实现仅 81 次 launch、约 338 ms，且时间几乎全部由 `_fused_up_proj_swiglu`、`_moe_router_scatter`、`_moe_bwd_*` 等融合 kernel 构成（图 39 深绿柱）。
 
-图 43 列出两侧 Top kernel：融合实现侧为 8 个融合 kernel 各计 9 次；HuggingFace 基线侧榜首为 Add（×4596）、IndexPut（×6912）、Nonzero（×1152）等调度密集型算子，与 benchmark 在 T=32768 时 2.54× full 加速（第 3.3.5 节）的根因一致。
+图 40 列出两侧 Top kernel：融合实现侧为 8 个融合 kernel 各计 9 次；HuggingFace 基线侧榜首为 Add（×4596）、IndexPut（×6912）、Nonzero（×1152）等调度密集型算子，与 benchmark 在 T=32768 时 2.54× full 加速（第 3.3.5 节）的根因一致。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/18_fused_moe_duration_breakdown.png" alt="MoE duration breakdown" width="100%"/><br/><strong>图 42</strong> Fused MoE T=8192 · device 时间构成（3 active steps）</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/19_fused_moe_top_kernels.png" alt="MoE top kernels" width="100%"/><br/><strong>图 43</strong> Fused MoE · Top kernel 累计耗时（绿= 融合实现，橙=aclnn）
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/18_fused_moe_duration_breakdown.png" alt="MoE duration breakdown" width="100%"/><br/><strong>图 39</strong> Fused MoE T=8192 · device 时间构成（3 active steps）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/19_fused_moe_top_kernels.png" alt="MoE top kernels" width="100%"/><br/><strong>图 40</strong> Fused MoE · Top kernel 累计耗时（绿= 融合实现，橙=aclnn）
 </td>
 </tr>
 </table>
 
 ### 3.6.8 Fused Linear CrossEntropy：MatMul 主导与 Ascend plain CE 路径
 
-Fused Linear CE 将 LM Head MatMul 与 CE 拼接。Profiling（BT=4096）中 MatMul 占两侧 device 时间约 75%（各约 120 ms/3 steps）；融合实现侧 CE 走 `liger_cross_entropy_*_plain` 路径（各 3 次），PyTorch 基线侧为 LogSoftmax+NLL 链（图 44）。
+Fused Linear CE 将 LM Head MatMul 与 CE 拼接。Profiling（BT=4096）中 MatMul 占两侧 device 时间约 75%（各约 120 ms/3 steps）；融合实现侧 CE 走 `liger_cross_entropy_*_plain` 路径（各 3 次），PyTorch 基线侧为 LogSoftmax+NLL 链（图 41）。
 
-Launch 数上融合实现（64）略高于 PyTorch 基线（49），因 plain CE 路径仍须把 chunk logits 与 fp32 grad buffer 写入显存，导致 profiling 峰值 NPU 显存 7162 MB 高于 6192 MB（表 9、图 47），与 benchmark 显存反增 10% 一致。图 45 单次迭代可见 MatMul 为共同瓶颈，CE 段融合实现略少 kernel 但未能抵消显存开销。
+Launch 数上融合实现（64）略高于 PyTorch 基线（49），因 plain CE 路径仍须把 chunk logits 与 fp32 grad buffer 写入显存，导致 profiling 峰值 NPU 显存 7162 MB 高于 6192 MB（表 9、图 44），与 benchmark 显存反增 10% 一致。图 42 单次迭代可见 MatMul 为共同瓶颈，CE 段融合实现略少 kernel 但未能抵消显存开销。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/20_flce_duration_breakdown.png" alt="FLCE duration breakdown" width="100%"/><br/><strong>图 44</strong> Fused Linear CE BT=4096 · device 时间构成（3 active steps）</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/21_flce_single_iteration.png" alt="FLCE single iteration" width="100%"/><br/><strong>图 45</strong> Fused Linear CE · 单次迭代 MatMul + CE kernel
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/20_flce_duration_breakdown.png" alt="FLCE duration breakdown" width="100%"/><br/><strong>图 41</strong> Fused Linear CE BT=4096 · device 时间构成（3 active steps）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/profiling/21_flce_single_iteration.png" alt="FLCE single iteration" width="100%"/><br/><strong>图 42</strong> Fused Linear CE · 单次迭代 MatMul + CE kernel
 </td>
 </tr>
 </table>
 
 ### 3.6.9 评测算子集 launch 与峰值显存（Profiling）
 
-图 46 对每个算子并排融合实现与基线的 compute launch 数（3 active steps）。MoE 基线柱极高，故纵轴为对数刻度；柱顶标注具体整数。Fused MoE：融合实现 81 次对比 HuggingFace 基线 22,704 次，直观体现 Python expert 循环代价。
+图 43 对每个算子并排融合实现与基线的 compute launch 数（3 active steps）。MoE 基线柱极高，故纵轴为对数刻度；柱顶标注具体整数。Fused MoE：融合实现 81 次对比 HuggingFace 基线 22,704 次，直观体现 Python expert 循环代价。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/profiling/13_suite_launch_pairs.png" alt="Benchmark operator suite launch pairs" width="88%"/><br/>
-<strong>图 46</strong> 评测算子集 compute kernel launch 数对比（3 active steps，MoE 为 log 轴）
+<strong>图 43</strong> 评测算子集 compute kernel launch 数对比（3 active steps，MoE 为 log 轴）
 </p>
 
-图 47 给出 12 组 case 的 profiling 峰值 NPU 显存；绿色 = 融合实现，红色=基线。与表 9 数值一致；Fused Linear CE 再次出现融合实现柱高于基线。
+图 44 给出 12 组 case 的 profiling 峰值 NPU 显存；绿色 = 融合实现，红色=基线。与表 9 数值一致；Fused Linear CE 再次出现融合实现柱高于基线。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/profiling/07_peak_memory_profiling.png" alt="Profiling peak memory" width="94%"/><br/>
-<strong>图 47</strong> Profiling 峰值 NPU 显存 · 评测算子集 × 2 实现（per fwd+bwd step）
+<strong>图 44</strong> Profiling 峰值 NPU 显存 · 评测算子集 × 2 实现（per fwd+bwd step）
 </p>
 
-图 48 为全部 12 case 的 launch 统计（浅蓝=含 harness 噪声的全部 launch，绿色=排除 randn 后的 compute launch）。MoE HuggingFace 基线在含噪声柱中亦极高，读图时以绿色柱为准对照图 46。
+图 45 为全部 12 case 的 launch 统计（浅蓝=含 harness 噪声的全部 launch，绿色=排除 randn 后的 compute launch）。MoE HuggingFace 基线在含噪声柱中亦极高，读图时以绿色柱为准对照图 43。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/profiling/01_kernel_launch_count.png" alt="All launch counts" width="94%"/><br/>
-<strong>图 48</strong> 十二组 case 的 device kernel launch 数（浅蓝=全部，绿色=compute only；MoE 为 log 轴）
+<strong>图 45</strong> 十二组 case 的 device kernel launch 数（浅蓝=全部，绿色=compute only；MoE 为 log 轴）
 </p>
 
 ### 3.6.10 Profiling 小结
@@ -433,7 +434,7 @@ Launch 数上融合实现（64）略高于 PyTorch 基线（49），因 plain CE
 | Launch | 融合算子普遍降低 compute launch；MoE 差异达两个数量级以上（融合实现 81 次对比 HuggingFace 基线 22,704 次） |
 | 时间构成 | Norm/CE/RoPE/MoE 从多段 aclnn 转为少量 Triton kernel；SwiGLU/FLCE 仍由 MatMul 主导 |
 | 显存 | Profiling peak 与 benchmark 排序一致；Fused Linear CE 为反例 |
-| 读图 | 图 28–32（RMSNorm）、33–34（CE）、38–45（RoPE/SwiGLU/MoE/FLCE）逐算子；图 46–48 为评测算子集汇总；MoE 须用 log 轴 |
+| 读图 | 图 28–32（RMSNorm）、33–34（CE）、35–42（RoPE/SwiGLU/MoE/FLCE）逐算子；图 43–45 为评测算子集汇总；MoE 须用 log 轴 |
 
 ---
 
@@ -461,15 +462,15 @@ PyTorch 基线路径会把 log_softmax 全表写入显存；融合实现 forward
 
 ### 3.7.3 RoPE：launch 削减与轻量融合
 
-HuggingFace `apply_rotary_pos_emb` 将旋转展开为 Mul/Add/Transpose/Cat 等 aclnn 链（图 38–39），单次迭代 launch 数约为融合实现 `_triton_rope_npu` 的 3× 以上。因单次 compute 耗时本身较小，device 时间差额约 19 ms/3 steps，对应 benchmark 1.25× 而非 RMSNorm 量级。
+HuggingFace `apply_rotary_pos_emb` 将旋转展开为 Mul/Add/Transpose/Cat 等 aclnn 链（图 35–36），单次迭代 launch 数约为融合实现 `_triton_rope_npu` 的 3× 以上。因单次 compute 耗时本身较小，device 时间差额约 19 ms/3 steps，对应 benchmark 1.25× 而非 RMSNorm 量级。
 
 ### 3.7.4 Fused MoE：调度主导
 
-HuggingFace 参考实现对每个 hit expert 执行 `linear → silu×up → linear → index_add_`，profiling 产生 IndexPut / Matmul / Nonzero 等数千次级 launch（图 42–43、图 46）。融合实现将路由、分组 GEMM 与聚合收拢为 `_fused_up_proj_swiglu`、`_moe_router_scatter` 等少量融合 kernel，故 launch 降至 O(1) 量级（81 次/3 steps）。
+HuggingFace 参考实现对每个 hit expert 执行 `linear → silu×up → linear → index_add_`，profiling 产生 IndexPut / Matmul / Nonzero 等数千次级 launch（图 39–40、图 43）。融合实现将路由、分组 GEMM 与聚合收拢为 `_fused_up_proj_swiglu`、`_moe_router_scatter` 等少量融合 kernel，故 launch 降至 O(1) 量级（81 次/3 steps）。
 
 ### 3.7.5 SwiGLU 与 Fused Linear CE：边界情形
 
-SwiGLU 的 MatMul 在 profiling 中累计约 260 ms/3 steps（图 40–41），融合 kernel 仅约 15 ms，故 benchmark 曲线几乎重合（图 13–16）。Fused Linear CE 在 Ascend 上走 plain CE 路径，MatMul 仍占 ~75% device 时间（图 44–45），叠加 logits 写入显存与 fp32 grad accumulator，导致图 24、图 47 中融合实现显存更高。
+SwiGLU 的 MatMul 在 profiling 中累计约 260 ms/3 steps（图 37–38），融合 kernel 仅约 15 ms，故 benchmark 曲线几乎重合（图 13–16）。Fused Linear CE 在 Ascend 上走 plain CE 路径，MatMul 仍占 ~75% device 时间（图 41–42），叠加 logits 写入显存与 fp32 grad accumulator，导致图 24、图 44 中融合实现显存更高。
 
 ---
 
@@ -536,45 +537,45 @@ LoRA 冻结 base 权重后，MatMul、Attention 等大算子仍占 step 主体�
 
 ### 4.4 详细分析
 
-吞吐（MFU）：启用 Liger-Kernel 后，实验组 MFU 相对对照组提升约 4%，与第 3 节评测算子集的加速方向一致。图 49、图 50 显示，两条曲线自 step 2 起分离，实验组稳定运行于较高区间；step 1 受编译与预热影响，不宜作为稳态对比依据。剔除 step 1 后，MFU 中位数为 0.7514 vs 0.7216（+4.14%），579 步中 574 步实验组更高。按 `global_tokens` 四分位统计，MFU 相对提升由低 token 步的 +3.88% 增至高 token 步的 +4.48%，与样例中 CrossEntropy、RoPE 在长序列下的单点收益特征一致。
+吞吐（MFU）：启用 Liger-Kernel 后，实验组 MFU 相对对照组提升约 4%，与第 3 节评测算子集的加速方向一致。图 46、图 47 显示，两条曲线自 step 2 起分离，实验组稳定运行于较高区间；step 1 受编译与预热影响，不宜作为稳态对比依据。剔除 step 1 后，MFU 中位数为 0.7514 vs 0.7216（+4.14%），579 步中 574 步实验组更高。按 `global_tokens` 四分位统计，MFU 相对提升由低 token 步的 +3.88% 增至高 token 步的 +4.48%，与样例中 CrossEntropy、RoPE 在长序列下的单点收益特征一致。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="End-to-end MFU" width="100%"/><br/><strong>图 49</strong> 整网 MFU 逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="MFU excluding step 1" width="100%"/><br/><strong>图 50</strong> 整网 MFU 逐步曲线（剔除 step 1）</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu.png" alt="End-to-end MFU" width="100%"/><br/><strong>图 46</strong> 整网 MFU 逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_mfu_skip_step1.png" alt="MFU excluding step 1" width="100%"/><br/><strong>图 47</strong> 整网 MFU 逐步曲线（剔除 step 1）</td>
 </tr>
 </table>
 
-NPU 显存：allocated 峰值 12.421 GB vs 12.476 GB（-0.44%），逐步曲线近乎重合（图 51）；reserved 峰值均为 46.93 GB（图 52）。整网 NPU 显存仍主要由 Attention、MatMul 等 未纳入本次 Liger patch 的路径主导，故节省幅度低于第 3 节 micro-benchmark 中的单点结果，属预期现象。
+NPU 显存：allocated 峰值 12.421 GB vs 12.476 GB（-0.44%），逐步曲线近乎重合（图 48）；reserved 峰值均为 46.93 GB（图 49）。整网 NPU 显存仍主要由 Attention、MatMul 等 未纳入本次 Liger patch 的路径主导，故节省幅度低于第 3 节 micro-benchmark 中的单点结果，属预期现象。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated memory" width="100%"/><br/><strong>图 51</strong> NPU allocated 显存逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved memory" width="100%"/><br/><strong>图 52</strong> NPU reserved 显存逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_allocated_gb.png" alt="NPU allocated memory" width="100%"/><br/><strong>图 48</strong> NPU allocated 显存逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/perf_max_memory_reserved_gb.png" alt="NPU reserved memory" width="100%"/><br/><strong>图 49</strong> NPU reserved 显存逐步曲线</td>
 </tr>
 </table>
 
-Host 内存：实验组自训练初期即低于对照组，末步为 96.26 GB vs 122.29 GB（-21.29%），绝对差约 26 GB（图 53）。该指标无法由 isolated micro-benchmark 直接解释，属于 Liger-Kernel 接入后 训练栈层面的观测现象，对长周期 LoRA SFT 的资源规划具有实际意义。
+Host 内存：实验组自训练初期即低于对照组，末步为 96.26 GB vs 122.29 GB（-21.29%），绝对差约 26 GB（图 50）。该指标无法由 isolated micro-benchmark 直接解释，属于 Liger-Kernel 接入后 训练栈层面的观测现象，对长周期 LoRA SFT 的资源规划具有实际意义。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/verl-sft/perf_cpu_memory_used_gb.png" alt="Host CPU memory" width="66%"/><br/>
-<strong>图 53</strong> Host CPU 内存逐步曲线
+<strong>图 50</strong> Host CPU 内存逐步曲线
 </p>
 
-精度与收敛：训练 loss 曲线整体重合，实验组末段略低（图 54）；step 580 处 2.479 vs 2.564（-3.32%），逐步平均绝对差（MAD）为 0.038；验证 loss 2.558 vs 2.644（-3.27%）。梯度范数曲线形态一致，未见异常尖峰（图 55），表明 Liger-Kernel 接入 未引入可观测的数值不稳定或收敛劣化。
+精度与收敛：训练 loss 曲线整体重合，实验组末段略低（图 51）；step 580 处 2.479 vs 2.564（-3.32%），逐步平均绝对差（MAD）为 0.038；验证 loss 2.558 vs 2.644（-3.27%）。梯度范数曲线形态一致，未见异常尖峰（图 52），表明 Liger-Kernel 接入 未引入可观测的数值不稳定或收敛劣化。
 
 <table align="center">
 <tr>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="Training loss" width="100%"/><br/><strong>图 54</strong> 训练 loss 逐步曲线</td>
-<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="Gradient norm" width="100%"/><br/><strong>图 55</strong> 梯度范数逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_loss.png" alt="Training loss" width="100%"/><br/><strong>图 51</strong> 训练 loss 逐步曲线</td>
+<td align="center" width="49%"><img src="../assets/Liger-Kernel/verl-sft/train_grad_norm.png" alt="Gradient norm" width="100%"/><br/><strong>图 52</strong> 梯度范数逐步曲线</td>
 </tr>
 </table>
 
-实验有效性：580/580 step 的 `global_tokens` 完全一致（图 56），累计 token 均为 0.03065 B，可排除 batch 配置差异对对比结果的干扰。
+实验有效性：580/580 step 的 `global_tokens` 完全一致（图 53），累计 token 均为 0.03065 B，可排除 batch 配置差异对对比结果的干扰。
 
 <p align="center">
 <img src="../assets/Liger-Kernel/verl-sft/train_global_tokens.png" alt="global_tokens alignment" width="66%"/><br/>
-<strong>图 56</strong> `global_tokens` 逐步对齐曲线
+<strong>图 53</strong> `global_tokens` 逐步对齐曲线
 </p>
 
 ### 4.5 结果汇总
@@ -584,7 +585,7 @@ Host 内存：实验组自训练初期即低于对照组，末步为 96.26 GB vs
 | 指标 | 实验组 | 对照组 | 相对变化 | 备注 |
 |------|--------|--------|--------------|------|
 | MFU 中位数 | 0.7514 | 0.7216 | +4.14% | step 2 起持续高于对照组 |
-| MFU 均值 | 0.7120 | 0.6835 | +4.16% | 579 步中 574 步实验组更高 |
+| MFU 均值 | 0.7129 | 0.6843 | +4.17% | 579 步中 574 步实验组更高 |
 | NPU allocated 峰值 | 12.421 GB | 12.476 GB | -0.44% | 逐步中位差约 -56 MB |
 | NPU reserved 峰值 | 46.93 GB | 46.93 GB | 持平 | — |
 | Host CPU 内存（末步） | 96.26 GB | 122.29 GB | -21.29% | 整网实验方可观测 |
@@ -617,7 +618,7 @@ Host 内存：实验组自训练初期即低于对照组，末步为 96.26 GB vs
 ### 5.2 收益衰减机制
 
 - 以本次 patch 涉及的样例 kernel 估算，T=8192 下相关子系统累计可节省约 35.7% 耗时，但该子系统约占整 step 耗时的 12%（Amdahl 定律）。
-- 据此推算整 step 理论提升约 4.3%，与实测 MFU +4.14% 及图 49、图 50 所示曲线相符。
+- 据此推算整 step 理论提升约 4.3%，与实测 MFU +4.14% 及图 46、图 47 所示曲线相符。
 - LoRA 进一步降低可训练参数路径在计算图中的占比；扩大 Liger patch 范围或采用全参数 SFT 时，MFU 提升上限可能高于本次观测值。
 
 ### 5.3 整网实验的增量价值
@@ -649,7 +650,7 @@ Liger-Kernel [v0.8.0](https://github.com/linkedin/Liger-Kernel/releases/tag/v0.8
 
 在 580 step、4 卡 FSDP、global_tokens 100% 对齐的对照实验中，启用 Liger-Kernel 后：
 
-- 吞吐：MFU 中位数相对提升 4.14%（0.7514 vs 0.7216），579 步中 574 步实验组更高，稳态曲线自 step 2 起持续分离（见表 18、图 49–50）；
+- 吞吐：MFU 中位数相对提升 4.14%（0.7514 vs 0.7216），579 步中 574 步实验组更高，稳态曲线自 step 2 起持续分离（见表 18、图 46–47）；
 - NPU 显存：allocated 峰值略降 0.44%，reserved 持平，整网显存仍由未 patch 的大算子路径主导；
 - Host 内存：末步 CPU 内存 96.26 GB vs 122.29 GB（-21.29%），为整网实验方可观测的显著收益（见表 20）；
 - 精度： train/loss、val/loss 曲线与对照组整体重合，末步略优（-3.3% 量级），梯度范数形态一致，未见数值不稳定或收敛劣化。
@@ -681,7 +682,7 @@ Liger-Kernel [v0.8.0](https://github.com/linkedin/Liger-Kernel/releases/tag/v0.8
 
 ---
 
-*数据可用性.* Liger 0.8.0、commit [`8020e69`](https://github.com/linkedin/Liger-Kernel/commit/8020e691d4b78be6cc4868b96e5c73ca3c1058ea)；verl commit [`c131c70`](https://github.com/verl-project/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669)；Atlas 800T A3(x86) micro-benchmark 与 4 卡 verl LoRA SFT 原始训练日志。整网指标均基于逐步原始记录统计，未做平滑或截断。
+*数据可用性.* Liger 0.8.0、commit [`3bb3b3f`](https://github.com/linkedin/Liger-Kernel/commit/3bb3b3fae6d0b2356116034a7f0ee1dde0ea71ea)；verl commit [`c131c70`](https://github.com/verl-project/verl/commit/c131c704db5b2e2dadc7576edcad0e6f4a22c669)；Atlas 800T A3(x86) micro-benchmark 与 4 卡 verl LoRA SFT 原始训练日志。整网指标均基于逐步原始记录统计，未做平滑或截断。
 
 ## 参考文献
 
